@@ -1,0 +1,6 @@
+# Copias de seguridad locales previas a los cambios grandes.
+# Quedan en el disco, pero el historial de git ya cumple esa función.
+*.bak
+
+# Config local de Claude Code (permisos de esta máquina, no del proyecto)
+.claude/

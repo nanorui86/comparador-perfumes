@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Comparador de Perfumes</title>
+<style>
+  /* ---------- Tema oscuro (base) ---------- */
+  :root {
+    --bg:         #100e17;
+    --bg-glow:    #1d1830;
+    --surface:    #1a1725;
+    --surface-2:  #221e30;
+    --surface-3:  #2b2540;
+
+    --border:      #322b48;
+    --border-soft: #262032;
+
+    --text:  #f3f1fa;
+    --muted: #a49dbe;
+    --faint: #6f6987;
+
+    --accent:      #b98cff;
+    --accent-dim:  rgba(185,140,255,0.14);
+    --on-accent:   #1a1226;
+    --ok:          #5fe3c0;
+    --ok-dim:      rgba(95,227,192,0.13);
+    --warn:        #ffca6b;
+    --warn-dim:    rgba(255,202,107,0.13);
+    --danger:      #ff7a90;
+    --danger-dim:  rgba(255,122,144,0.13);
+    --neutral-dim: rgba(164,157,190,0.13);
+
+    --sweep:  rgba(255,255,255,0.045);
+    --shadow: 0 8px 24px rgba(0,0,0,0.35);
+
+    --radius:    14px;
+    --radius-sm: 10px;
+  }
+
+  /* ---------- Tema claro ---------- */
+  /* Se aplica si el sistema está en claro y no elegiste oscuro a mano... */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:         #f6f4fb;
+      --bg-glow:    #e8e0f9;
+      --surface:    #ffffff;
+      --surface-2:  #f4f1fa;
+      --surface-3:  #ebe5f6;
+
+      --border:      #ddd5ec;
+      --border-soft: #e9e4f2;
+
+      --text:  #1b1726;
+      --muted: #5f5878;
+      --faint: #8a83a0;
+
+      --accent:      #7534d6;
+      --accent-dim:  rgba(117,52,214,0.10);
+      --on-accent:   #ffffff;
+      --ok:          #0c8267;
+      --ok-dim:      rgba(12,130,103,0.11);
+      --warn:        #96600a;
+      --warn-dim:    rgba(150,96,10,0.11);
+      --danger:      #c22b46;
+      --danger-dim:  rgba(194,43,70,0.10);
+      --neutral-dim: rgba(95,88,120,0.10);
+
+      --sweep:  rgba(0,0,0,0.045);
+      --shadow: 0 8px 24px rgba(60,40,110,0.10);
+    }
+  }
+  /* ...y siempre que lo elijas a mano, sin importar el sistema */
+  :root[data-theme="light"] {
+    --bg:         #f6f4fb;
+    --bg-glow:    #e8e0f9;
+    --surface:    #ffffff;
+    --surface-2:  #f4f1fa;
+    --surface-3:  #ebe5f6;
+
+    --border:      #ddd5ec;
+    --border-soft: #e9e4f2;
+
+    --text:  #1b1726;
+    --muted: #5f5878;
+    --faint: #8a83a0;
+
+    --accent:      #7534d6;
+    --accent-dim:  rgba(117,52,214,0.10);
+    --on-accent:   #ffffff;
+    --ok:          #0c8267;
+    --ok-dim:      rgba(12,130,103,0.11);
+    --warn:        #96600a;
+    --warn-dim:    rgba(150,96,10,0.11);
+    --danger:      #c22b46;
+    --danger-dim:  rgba(194,43,70,0.10);
+    --neutral-dim: rgba(95,88,120,0.10);
+
+    --sweep:  rgba(0,0,0,0.045);
+    --shadow: 0 8px 24px rgba(60,40,110,0.10);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    font-family: 'Segoe UI Variable Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    background:
+      radial-gradient(1200px 600px at 50% -200px, var(--bg-glow), transparent 70%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0 0 80px;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .2s, color .2s;
+  }
+
+  .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px; }
+
+  /* ---------- Encabezado ---------- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 22px 0 14px;
+  }
+  .brand { min-width: 0; }
+  .brand h1 {
+    font-size: 20px; font-weight: 750; letter-spacing: -0.01em;
+    margin: 0; display: flex; align-items: center; gap: 8px;
+  }
+  .brand .subtitle { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  .topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+  /* ---------- Botones base ---------- */
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 8px 13px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+  .btn.active {
+    background: var(--accent); border-color: var(--accent);
+    color: var(--on-accent); font-weight: 700;
+  }
+  .btn.ghost { background: transparent; }
+  .btn-count {
+    font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 20px;
+    background: var(--accent-dim); color: var(--accent);
+  }
+  .btn.active .btn-count { background: rgba(0,0,0,0.16); color: var(--on-accent); }
+
+  /* ---------- Buscador (pegajoso) ---------- */
+  .search-sticky {
+    position: sticky; top: 0; z-index: 30;
+    padding: 8px 0 10px;
+    background: linear-gradient(to bottom, var(--bg) 68%, transparent);
+  }
+  .search-row { display: flex; gap: 8px; }
+  .search-field { position: relative; flex: 1; min-width: 0; }
+  .search-field .icon {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--faint); font-size: 15px; pointer-events: none;
+  }
+  .search-row input[type=text] {
+    width: 100%; padding: 13px 38px 13px 40px;
+    border-radius: 12px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text);
+    font: inherit; font-size: 15px; outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .search-row input[type=text]:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .search-clear {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: var(--faint); cursor: pointer;
+    font-size: 17px; line-height: 1; padding: 4px; display: none;
+  }
+  .search-clear.visible { display: block; }
+  .search-clear:hover { color: var(--text); }
+  .search-row .btn-search {
+    background: var(--accent); color: var(--on-accent); border: none;
+    padding: 0 22px; border-radius: 12px; font-weight: 750; font-size: 15px;
+    cursor: pointer; flex-shrink: 0; font-family: inherit;
+  }
+  .search-row .btn-search:disabled { opacity: .45; cursor: default; }
+
+  /* ---------- Fila de acciones ---------- */
+  .action-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 12px; }
+
+  /* ---------- Tira de marcas ---------- */
+  .brand-strip {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px;
+    margin-bottom: 14px; scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .brand-strip::-webkit-scrollbar { height: 5px; }
+  .brand-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .chip {
+    font-size: 12.5px; padding: 6px 13px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); cursor: pointer; white-space: nowrap;
+    transition: .15s; flex-shrink: 0;
+  }
+  .chip:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+
+  /* ---------- Barra de herramientas ---------- */
+  .toolbar { display: none; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+  .toolbar.visible { display: flex; }
+  .toolbar .filter-field { position: relative; flex: 1; min-width: 160px; }
+  .toolbar input[type=text] {
+    width: 100%; padding: 9px 12px 9px 32px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft); background: var(--surface);
+    color: var(--text); font: inherit; font-size: 13px; outline: none;
+  }
+  .toolbar input[type=text]:focus { border-color: var(--accent); }
+  .toolbar .filter-field .icon {
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    color: var(--faint); font-size: 12px; pointer-events: none;
+  }
+  .toolbar select {
+    padding: 9px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft); background: var(--surface);
+    color: var(--text); font: inherit; font-size: 13px; outline: none; cursor: pointer;
+  }
+  .toolbar select:focus { border-color: var(--accent); }
+  .toggle {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 13px; color: var(--muted); padding: 9px 12px;
+    border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+    background: var(--surface); user-select: none; white-space: nowrap;
+  }
+  .toggle input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; cursor: pointer; }
+  .toggle.on { color: var(--text); border-color: var(--accent); }
+
+  /* ---------- Filtro por tienda ---------- */
+  .store-filter { display: none; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 12px; }
+  .store-filter.visible { display: flex; }
+  .store-filter::-webkit-scrollbar { height: 5px; }
+  .store-filter::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .store-chip {
+    font-size: 12px; padding: 5px 11px; border-radius: 20px; cursor: pointer;
+    border: 1px solid var(--border-soft); background: transparent;
+    color: var(--muted); white-space: nowrap; flex-shrink: 0; transition: .15s;
+    display: inline-flex; align-items: center; gap: 5px; font-family: inherit;
+  }
+  .store-chip:hover { color: var(--text); border-color: var(--accent); }
+  .store-chip.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 650; }
+  .store-chip .n { opacity: .65; font-variant-numeric: tabular-nums; }
+
+  /* ---------- Estado ---------- */
+  .status { color: var(--muted); font-size: 12.5px; margin-bottom: 12px; min-height: 16px; }
+  .status .err { color: var(--danger); }
+  .stock-hint {
+    color: var(--warn); font-size: 12px; margin: -6px 0 12px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .stock-hint::before {
+    content: ''; width: 11px; height: 11px; border-radius: 50%; flex: none;
+    border: 2px solid var(--warn); border-top-color: transparent;
+    animation: girar .7s linear infinite;
+  }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .stock-hint::before { animation: none; } }
+
+  /* ---------- Resultados ---------- */
+  .results { display: flex; flex-direction: column; gap: 8px; }
+  .group { display: flex; flex-direction: column; gap: 6px; }
+
+  .row {
+    background: var(--surface); border: 1px solid var(--border-soft);
+    border-radius: var(--radius); padding: 11px 14px;
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-areas: 'rank main price actions';
+    align-items: center; gap: 12px;
+    transition: background .15s, border-color .15s;
+  }
+  .row:hover { background: var(--surface-2); border-color: var(--border); }
+  .row.best { border-color: var(--ok); background: linear-gradient(90deg, var(--ok-dim), transparent 40%), var(--surface); }
+  .row.nostock { opacity: .62; }
+
+  /* El display:flex de .children le ganaba al atributo hidden (una regla de autor
+     siempre le gana a la del navegador), así que los grupos "plegados" mostraban
+     igual sus filas. Esto lo devuelve a su lugar. */
+  [hidden] { display: none !important; }
+
+  /* Filas de las otras tiendas dentro de un grupo */
+  .children { display: flex; flex-direction: column; gap: 6px; margin-left: 22px; }
+  .children .row { background: transparent; border-style: dashed; padding: 9px 14px; }
+  .children .row:hover { background: var(--surface); border-style: solid; }
+
+  .rank {
+    grid-area: rank; width: 22px; text-align: center;
+    font-size: 12px; font-weight: 750; color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .row.best .rank { color: var(--ok); }
+  .rank.blank { color: var(--faint); opacity: .4; font-weight: 400; }
+
+  .main { grid-area: main; min-width: 0; }
+  .name {
+    font-size: 14px; font-weight: 620; line-height: 1.32; margin: 0 0 4px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+  .store-name { font-weight: 600; color: var(--muted); }
+
+  .badge {
+    font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
+    white-space: nowrap; letter-spacing: .01em;
+  }
+  .badge.stock   { background: var(--ok-dim);     color: var(--ok); }
+  .badge.nostock { background: var(--danger-dim); color: var(--danger); }
+  .badge.unknown { background: var(--warn-dim);   color: var(--warn); }
+  .badge.aprox   { background: var(--warn-dim);   color: var(--warn); cursor: help; }
+  .badge.perml   { background: var(--neutral-dim); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .badge.best-tag{ background: var(--ok-dim); color: var(--ok); }
+
+  .more {
+    font: inherit; font-size: 11px; font-weight: 650; padding: 2px 9px;
+    border-radius: 20px; border: 1px solid var(--accent-dim);
+    background: var(--accent-dim); color: var(--accent); cursor: pointer;
+    white-space: nowrap;
+  }
+  .more:hover { border-color: var(--accent); }
+
+  .price { grid-area: price; text-align: right; white-space: nowrap; }
+  .amount { font-size: 17px; font-weight: 780; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .amount.none { font-size: 13px; font-weight: 500; color: var(--muted); }
+  .children .amount { font-size: 15px; }
+  .transfer { font-size: 11px; color: var(--ok); margin-top: 1px; font-variant-numeric: tabular-nums; }
+
+  .actions { grid-area: actions; display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
+  .icon-btn {
+    font: inherit; font-size: 12px; padding: 5px 9px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    cursor: pointer; text-decoration: none; text-align: center;
+    white-space: nowrap; transition: .15s; line-height: 1.4;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent); background: var(--surface-3); }
+  .icon-btn.added { color: var(--ok); border-color: var(--ok); }
+  .icon-btn.buy { color: var(--accent); border-color: var(--accent-dim); }
+
+  @media (max-width: 620px) {
+    .row {
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        'rank main price'
+        '.    actions actions';
+      row-gap: 8px;
+    }
+    .actions { flex-direction: row; justify-content: flex-start; }
+    .icon-btn { flex: 0 0 auto; }
+    .amount { font-size: 16px; }
+    .children { margin-left: 12px; }
+  }
+
+  /* ---------- Vacíos y carga ---------- */
+  .empty {
+    text-align: center; color: var(--muted); padding: 44px 20px; font-size: 14px;
+    border: 1px dashed var(--border); border-radius: var(--radius);
+  }
+  .empty strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 5px; }
+
+  .skeleton { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius); height: 68px; overflow: hidden; position: relative; }
+  .skeleton::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, var(--sweep), transparent);
+    animation: sweep 1.25s infinite;
+  }
+  @keyframes sweep { to { transform: translateX(100%); } }
+
+  /* ---------- Paneles ---------- */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 14px;
+    display: none; box-shadow: var(--shadow);
+  }
+  .panel.visible { display: block; }
+  .panel-title {
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--faint); margin-bottom: 12px;
+  }
+
+  .list-item {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px;
+  }
+  .list-item:last-child { border-bottom: none; }
+  .list-info { min-width: 0; flex: 1; }
+  .list-name { font-weight: 620; margin-bottom: 2px; }
+  .list-sub { color: var(--muted); font-size: 11.5px; }
+  .list-target { color: var(--ok); font-size: 11.5px; }
+  .list-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+  .mini-btn {
+    font: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .mini-btn:hover { color: var(--text); border-color: var(--accent); }
+  .mini-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+  .panel-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 14px; }
+
+  .qty-btn {
+    width: 24px; height: 24px; border-radius: 7px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .qty-btn:hover { border-color: var(--accent); }
+  .qty { min-width: 20px; text-align: center; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .line-price { font-weight: 700; min-width: 82px; text-align: right; font-variant-numeric: tabular-nums; }
+  .remove-btn { color: var(--danger); background: none; border: none; cursor: pointer; font-size: 15px; padding: 2px 4px; }
+
+  .summary { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+  .summary-line { font-size: 12.5px; color: var(--muted); display: flex; justify-content: space-between; padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .summary-total { font-size: 16px; font-weight: 800; display: flex; justify-content: space-between; margin-top: 8px; font-variant-numeric: tabular-nums; }
+
+  .wide-btn { width: 100%; justify-content: center; margin-top: 12px; }
+
+  .store-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .store-link {
+    font-size: 12px; padding: 6px 11px; border-radius: 20px;
+    border: 1px solid var(--border-soft); background: transparent;
+    color: var(--muted); text-decoration: none; transition: .15s;
+  }
+  .store-link:hover { color: var(--text); border-color: var(--accent); }
+
+  .help-item { margin-bottom: 15px; font-size: 13px; line-height: 1.5; }
+  .help-item:last-child { margin-bottom: 0; }
+  .help-item h4 { font-size: 13.5px; font-weight: 700; margin: 0 0 3px; display: flex; align-items: center; gap: 6px; }
+  .help-item p { color: var(--muted); margin: 0; }
+
+  /* ---------- Volver arriba ---------- */
+  .to-top {
+    position: fixed; right: 18px; bottom: 22px; z-index: 40;
+    width: 42px; height: 42px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--surface-3); color: var(--text);
+    cursor: pointer; font-size: 17px; box-shadow: var(--shadow);
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .to-top.visible { opacity: 1; pointer-events: auto; }
+  .to-top:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>🧴 Comparador de Perfumes</h1>
+      <div class="subtitle" id="subtitle">Precio y stock en todas tus tiendas, de una</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn ghost" id="themeBtn" onclick="toggleTema()" title="Cambiar entre claro y oscuro">☀️</button>
+      <button class="btn ghost" id="storesBtn" onclick="togglePanel('storesPanel','storesBtn')">🔗 Tiendas</button>
+      <button class="btn ghost" id="helpBtn" onclick="togglePanel('helpPanel','helpBtn')">❓</button>
+    </div>
+  </header>
+
+  <div class="search-sticky">
+    <div class="search-row">
+      <div class="search-field">
+        <span class="icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Ej: Lattafa Khamrah, Club de Nuit..."
+               onkeydown="if(event.key==='Enter') buscar()" oninput="onSearchInput()">
+        <button class="search-clear" id="searchClear" onclick="limpiarBusqueda()" title="Limpiar">✕</button>
+      </div>
+      <button class="btn-search" id="searchBtn" onclick="buscar()">Buscar</button>
+    </div>
+  </div>
+
+  <div class="action-row">
+    <button class="btn" id="favBtn" onclick="togglePanel('favPanel','favBtn', cargarFavoritos)">☆ Favoritos <span class="btn-count" id="favCount" hidden></span></button>
+    <button class="btn" id="cartBtn" onclick="togglePanel('cartPanel','cartBtn', cargarCarrito)">🛒 Carrito <span class="btn-count" id="cartCount" hidden></span></button>
+    <button class="btn" onclick="guardarFavoritoActual()">＋ Guardar búsqueda</button>
+  </div>
+
+  <div class="panel" id="storesPanel">
+    <div class="panel-title">Tiendas que consulta</div>
+    <div class="store-links" id="storeLinks"></div>
+  </div>
+
+  <div class="panel" id="helpPanel">
+    <div class="panel-title">Cómo funciona</div>
+    <div class="help-item">
+      <h4>🔍 Buscar</h4>
+      <p>Escribí el nombre de un perfume o marca y tocá "Buscar" (o Enter). Consulta todas las tiendas a la vez y te muestra todo ordenado del más conveniente al menos conveniente.</p>
+    </div>
+    <div class="help-item">
+      <h4>🧩 Agrupar iguales</h4>
+      <p>Junta en una sola fila el mismo perfume vendido por distintas tiendas: te muestra la más barata y, tocando "+N tiendas", se despliegan las demás. Ignora la marca y el tamaño al comparar los nombres, así "Khamrah" y "Khamrah 100ml - Lattafa" caen juntos. Si alguna vez agrupa de más, destildalo.</p>
+    </div>
+    <div class="help-item">
+      <h4>🎛️ Filtrar y ordenar</h4>
+      <p>Filtro por texto, orden (precio por ml, precio total, nombre o tienda) y un tilde para ver solo lo que está en stock. Debajo, un chip por tienda para quedarte con una sola. Nada de esto vuelve a consultar los sitios: filtra al instante lo que ya tenés en pantalla. Tus preferencias quedan guardadas para la próxima vez.</p>
+    </div>
+    <div class="help-item">
+      <h4>✓ Stock</h4>
+      <p>No todas las tiendas dicen lo mismo. Algunas publican el stock en su propio catálogo y ahí el dato es firme. Otras solo lo dejan ver en un cartel del listado, y una (Empretienda) directamente no lo dice: ahí antes figuraba "EN STOCK" siempre, aunque no hubiera. Ahora esos casos se confirman abriendo la ficha real del producto, unos segundos después de la búsqueda; cuando el cartel queda con un ✓, ese stock está verificado en la tienda. "CONSULTAR" quiere decir que no se pudo saber, no que no haya. Pasá el mouse por el cartel y te dice de dónde salió el dato.</p>
+    </div>
+    <div class="help-item">
+      <h4>💧 Precio por ml</h4>
+      <p>El orden por defecto es por precio por mililitro, que es la comparación honesta entre frascos de distinto tamaño. Cuando el tamaño no figura en el nombre se asume 100ml y el valor aparece con "~" adelante.</p>
+    </div>
+    <div class="help-item">
+      <h4>≈ Sin marca</h4>
+      <p>Algunas tiendas no ponen la marca en el nombre del producto (publican "Khamrah", no "Lattafa Khamrah"). Cuando una tienda no devuelve nada, el sistema reintenta sin la marca y marca esos resultados con este cartelito, para que sepas que la coincidencia fue por el resto del nombre.</p>
+    </div>
+    <div class="help-item">
+      <h4>☆ Favoritos</h4>
+      <p>Guardá una búsqueda (ej: "khamrah") para no reescribirla. Si le ponés un precio objetivo, todos los días a las 9am el sistema revisa las tiendas y te manda un email si alguna está por debajo de ese precio. Solo avisa si algo cambió.</p>
+    </div>
+    <div class="help-item">
+      <h4>🛒 Carrito</h4>
+      <p>A diferencia de Favoritos (que guarda una búsqueda), esto guarda un producto puntual con su precio y tienda. Es tu lista de "esto ya lo decidí", con el total sumado y subtotales por tienda — no es una compra automática. El link "Ver ↗" te lleva a la tienda real.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="favPanel">
+    <div class="panel-title">Búsquedas guardadas</div>
+    <div id="favList"></div>
+  </div>
+
+  <div class="panel" id="cartPanel">
+    <div class="panel-title">Tu carrito</div>
+    <div id="cartList"></div>
+  </div>
+
+  <div class="brand-strip" id="brandChips"></div>
+
+  <div class="toolbar" id="toolbar">
+    <div class="filter-field">
+      <span class="icon">🔎</span>
+      <input type="text" id="filterInput" placeholder="Filtrar por nombre..." oninput="render()">
+    </div>
+    <select id="sortSelect" onchange="onPrefChange()">
+      <option value="ml">Precio por ml ↑</option>
+      <option value="precio">Precio total ↑</option>
+      <option value="precioDesc">Precio total ↓</option>
+      <option value="nombre">Nombre A-Z</option>
+      <option value="tienda">Por tienda</option>
+    </select>
+    <label class="toggle" id="groupToggleLabel">
+      <input type="checkbox" id="agruparChk" onchange="onPrefChange()">
+      Agrupar iguales
+    </label>
+    <label class="toggle" id="stockToggleLabel">
+      <input type="checkbox" id="stockOnly" onchange="onPrefChange()">
+      Solo con stock
+    </label>
+  </div>
+
+  <div class="store-filter" id="storeFilter"></div>
+
+  <div class="status" id="status"></div>
+  <div class="stock-hint" id="stockHint" hidden></div>
+  <div class="results" id="results"></div>
+</div>
+
+<button class="to-top" id="toTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Volver arriba">↑</button>
+
+<script>
+/* Tiendas y marcas las manda el backend (listarConfig), que las saca de SITES y
+   MARCAS_CONOCIDAS. Estas listas son solo el fallback para pintar algo mientras
+   llega la respuesta, o si el backend es viejo. No hace falta mantenerlas. */
+const MARCAS_FALLBACK = ['Lattafa', 'Afnan', 'Armaf', 'Ard Al Zaafaran', 'Al Haramain', 'Rasasi', 'Nabeel',
+                'Maison Alhambra', 'Khadlaj', 'Bharara', 'Riifs', 'French Avenue', 'Paris Corner',
+                'Swiss Arabian', 'Rayhaan', 'Maison Asrar'];
+
+
+const SITIOS_FALLBACK = [
+  { name: 'Esencias Oasis',     url: 'https://esenciasoasis.com' },
+  { name: 'West Import',        url: 'https://westimportshop.com' },
+  { name: 'Rincón Perfumado',   url: 'https://rinconperfumado.com' },
+  { name: "Tom's Parfum Club",  url: 'https://tomsparfumclub.com.ar' },
+  { name: 'Vaphouse',           url: 'https://pency.app/vaphouse' },
+  { name: 'Un Koala Perfumado', url: 'https://unkoalaperfumado.com.ar' },
+  { name: 'Ambrosía Perfumes',  url: 'https://www.ambrosiaperfumes.com.ar' },
+  { name: 'Huelepectacular',    url: 'https://pedix.app/huelepectacular' },
+  { name: 'Idalium Parfums',    url: 'https://pedix.app/idalium' },
+  { name: 'Bancoperfumes',      url: 'https://bancoperfumes.tiendanegocio.com' },
+  { name: 'Klutch Shop',        url: 'https://klutchshop.ar' },
+  { name: 'Milrah Perfumes',    url: 'https://milrahperfumes.com' },
+  { name: 'Imperium Fragans',   url: 'https://imperiumfragans.empretienda.com.ar' }
+];
+
+const PREFS_KEY = 'comparador-perfumes-prefs';
+
+let SITIOS = SITIOS_FALLBACK;
+let MARCAS = MARCAS_FALLBACK;
+let ultimosResultados = [];   // lo que devolvió el backend
+let ultimosErrores = [];      // tiendas que no respondieron
+let verificandoStock = false;
+let rondasVerificacion = 0;
+const MAX_RONDAS_VERIFICACION = 3;   // 3 lotes de 20 = hasta 60 fichas por búsqueda
+let visibles = [];            // lo que está en pantalla ahora (filtrado + ordenado)
+let tiendaActiva = 'todas';
+let temaElegido = null;       // 'light' | 'dark' | null (sigue al sistema)
+let favoritos = [];
+let carritoCache = [];
+let enCarrito = {};           // url -> true, para marcar el botón de los resultados
+
+/* ============ preferencias ============ */
+
+function leerPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; }
+  catch (e) { return {}; }
+}
+
+function guardarPrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      orden:     document.getElementById('sortSelect').value,
+      soloStock: document.getElementById('stockOnly').checked,
+      agrupar:   document.getElementById('agruparChk').checked,
+      tema:      temaElegido
+    }));
+  } catch (e) { /* modo incógnito o cookies bloqueadas: no pasa nada */ }
+}
+
+function aplicarPrefs() {
+  const p = leerPrefs();
+  if (p.orden) document.getElementById('sortSelect').value = p.orden;
+  document.getElementById('stockOnly').checked = p.soloStock === true;
+  document.getElementById('agruparChk').checked = p.agrupar !== false;  // agrupado por defecto
+  temaElegido = (p.tema === 'light' || p.tema === 'dark') ? p.tema : null;
+  aplicarTema();
+  pintarToggles();
+}
+
+function onPrefChange() {
+  pintarToggles();
+  guardarPrefs();
+  render();
+}
+
+function pintarToggles() {
+  document.getElementById('stockToggleLabel')
+    .classList.toggle('on', document.getElementById('stockOnly').checked);
+  document.getElementById('groupToggleLabel')
+    .classList.toggle('on', document.getElementById('agruparChk').checked);
+}
+
+/* ============ tema ============ */
+
+function temaEfectivo() {
+  if (temaElegido) return temaElegido;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function aplicarTema() {
+  if (temaElegido) document.documentElement.setAttribute('data-theme', temaElegido);
+  else document.documentElement.removeAttribute('data-theme');
+  // El botón muestra a dónde vas a ir, no dónde estás
+  document.getElementById('themeBtn').textContent = temaEfectivo() === 'light' ? '🌙' : '☀️';
+}
+
+function toggleTema() {
+  temaElegido = temaEfectivo() === 'light' ? 'dark' : 'light';
+  aplicarTema();
+  guardarPrefs();
+}
+
+/* ============ utilidades ============ */
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+
+function fmtPrice(n) {
+  if (n == null) return null;
+  return '$' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+}
+
+function claveStock(r) {
+  return r.inStock === true ? 'stock' : (r.inStock === false ? 'nostock' : 'unknown');
+}
+
+function textoStock(r) {
+  const base = r.inStock === true ? 'EN STOCK' : (r.inStock === false ? 'SIN STOCK' : 'CONSULTAR');
+  // El tilde solo cuando lo confirmamos abriendo la ficha del producto
+  return r.stockFuente === 'ficha' ? base + ' ✓' : base;
+}
+
+/* De dónde salió el dato. Sirve para no mostrar como certeza algo que es una
+   deducción: pasás el mouse por encima del cartel y te lo dice. */
+function tituloStock(r) {
+  if (r.stockFuente === 'ficha')  return 'Confirmado abriendo la ficha del producto en la tienda.';
+  if (r.stockFuente === 'dato')   return 'La tienda publica el stock en su catálogo.';
+  if (r.stockFuente === 'cartel') return 'Deducido del cartel de stock del listado. Se confirma abriendo la ficha.';
+  return 'Esta tienda no publica el stock en el listado. Conviene confirmarlo en la ficha.';
+}
+
+/* Precio por ml "efectivo": si hay descuento por transferencia, ese manda */
+function porMl(r) {
+  return r.pricePerMlTransferencia != null ? r.pricePerMlTransferencia : r.pricePerMl;
+}
+
+/* ============ paneles ============ */
+
+function togglePanel(panelId, btnId, onOpen) {
+  const panel = document.getElementById(panelId);
+  const abrir = !panel.classList.contains('visible');
+
+  ['storesPanel', 'helpPanel', 'favPanel', 'cartPanel'].forEach(function (id) {
+    document.getElementById(id).classList.remove('visible');
+  });
+  ['storesBtn', 'helpBtn', 'favBtn', 'cartBtn'].forEach(function (id) {
+    document.getElementById(id).classList.remove('active');
+  });
+
+  if (abrir) {
+    panel.classList.add('visible');
+    if (btnId) document.getElementById(btnId).classList.add('active');
+    if (onOpen) onOpen();
+  }
+}
+
+/* ============ búsqueda ============ */
+
+function renderChips() {
+  document.getElementById('brandChips').innerHTML = MARCAS
+    .map(function (m, i) { return '<span class="chip" onclick="buscarMarca(' + i + ')">' + escapeHtml(m) + '</span>'; })
+    .join('');
+}
+
+function buscarMarca(i) {
+  document.getElementById('searchInput').value = MARCAS[i];
+  onSearchInput();
+  buscar();
+}
+
+function onSearchInput() {
+  const v = document.getElementById('searchInput').value;
+  document.getElementById('searchClear').classList.toggle('visible', v.length > 0);
+}
+
+function limpiarBusqueda() {
+  const input = document.getElementById('searchInput');
+  input.value = '';
+  onSearchInput();
+  input.focus();
+}
+
+function buscar() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+
+  document.getElementById('searchBtn').disabled = true;
+  document.getElementById('results').innerHTML =
+    '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+  document.getElementById('status').innerHTML = 'Consultando ' + SITIOS.length + ' tiendas...';
+  document.getElementById('toolbar').classList.remove('visible');
+  document.getElementById('storeFilter').classList.remove('visible');
+  document.getElementById('filterInput').value = '';
+  tiendaActiva = 'todas';
+
+  google.script.run
+    .withSuccessHandler(onResultados)
+    .withFailureHandler(onError)
+    .buscarPerfumes(q);
+}
+
+function onResultados(data) {
+  document.getElementById('searchBtn').disabled = false;
+  ultimosResultados = (data && data.results) || [];
+  ultimosErrores = (data && data.errors) || [];
+  rondasVerificacion = 0;
+
+  if (ultimosResultados.length > 0) {
+    document.getElementById('toolbar').classList.add('visible');
+    document.getElementById('storeFilter').classList.add('visible');
+  }
+  render();
+  verificarStockVisible();
+}
+
+/* ============ verificación de stock ============ */
+
+/* Hay tiendas que no publican el stock en el listado (Empretienda) y otras donde
+   solo se deduce de un cartel del tema (Tiendanube): eso es adivinar. Para esas,
+   el backend abre la ficha real del producto, donde la plataforma sí lo dice.
+   Se hace después de mostrar los resultados para no demorar la búsqueda, de a
+   lotes (el backend pide todas las fichas del lote a la vez). */
+function verificarStockVisible() {
+  if (verificandoStock) return;
+  if (rondasVerificacion >= MAX_RONDAS_VERIFICACION) return;
+
+  const pedidos = [];
+  const vistos = {};
+  // Recorremos en el orden de la pantalla: lo primero que se ve es lo que importa
+  visibles.forEach(function (r) {
+    if (r.stockVerificado || r.stockFuente === 'dato') return;
+    if (!r.url || vistos[r.url]) return;
+    vistos[r.url] = true;
+    pedidos.push({ url: r.url, site: r.site });
+  });
+  if (!pedidos.length) return;
+
+  const lote = pedidos.slice(0, 20);
+  verificandoStock = true;
+  rondasVerificacion++;
+
+  const aviso = document.getElementById('stockHint');
+  aviso.textContent = 'Confirmando stock en la ficha de ' + lote.length +
+                      ' producto' + (lote.length === 1 ? '' : 's') + '...';
+  aviso.hidden = false;
+
+  google.script.run
+    .withSuccessHandler(function (mapa) { aplicarStockVerificado(lote, mapa); })
+    .withFailureHandler(function () {
+      // Backend viejo o error de red: no pasa nada, quedan los datos del listado
+      verificandoStock = false;
+      document.getElementById('stockHint').hidden = true;
+    })
+    .verificarStockLote(lote);
+}
+
+function aplicarStockVerificado(lote, mapa) {
+  verificandoStock = false;
+  document.getElementById('stockHint').hidden = true;
+
+  const delLote = {};
+  lote.forEach(function (pedido) { delLote[pedido.url] = true; });
+
+  ultimosResultados.forEach(function (r) {
+    if (!delLote[r.url]) return;
+    // Se marca aunque la ficha no haya dicho nada, así no lo reintenta en bucle
+    r.stockVerificado = true;
+    const estado = mapa ? mapa[r.url] : undefined;
+    if (estado === true || estado === false) {
+      r.inStock = estado;
+      r.stockFuente = 'ficha';
+    }
+  });
+
+  render();
+  verificarStockVisible();   // por si quedaron más productos que el tope del lote
+}
+
+function onError(err) {
+  document.getElementById('searchBtn').disabled = false;
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('status').innerHTML =
+    '<span class="err">Error al consultar: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</span>';
+}
+
+/* ============ agrupación ============ */
+
+/* Palabras que no distinguen un perfume de otro y por eso no entran en la clave:
+   la marca (cada tienda la escribe distinto o directamente la omite), el tamaño,
+   y el vocabulario de perfumería que se repite en todos lados. */
+function construirRuido() {
+  const set = {};
+  ['edp', 'edt', 'edc', 'eau', 'de', 'del', 'la', 'el', 'los', 'las', 'parfum', 'parfums',
+   'toilette', 'cologne', 'perfume', 'perfumes', 'fragancia', 'fragancias', 'arabe', 'arabes',
+   'original', 'originales', 'importado', 'importada', 'spray', 'vaporizador', 'ml', 'x',
+   'para', 'por', 'con', 'unisex'
+  ].forEach(function (w) { set[w] = true; });
+  MARCAS.forEach(function (m) {
+    m.toLowerCase().split(/\s+/).forEach(function (w) { set[w] = true; });
+  });
+  return set;
+}
+
+// Se rearma cuando llegan las marcas del backend (ver renderConfig)
+let RUIDO = construirRuido();
+
+// Rango de marcas de acento que deja el normalize('NFD'), armado con fromCharCode
+// para no meter caracteres invisibles en el archivo.
+const RE_DIACRITICOS = new RegExp('[' + String.fromCharCode(0x0300) + '-' + String.fromCharCode(0x036f) + ']', 'g');
+
+function claveAgrupacion(name) {
+  let s = String(name == null ? '' : name).toLowerCase();
+  s = s.normalize ? s.normalize('NFD').replace(RE_DIACRITICOS, '') : s;
+  s = s.replace(/\d+(?:[.,]\d+)?\s*ml/g, ' ');   // el tamaño no distingue el perfume
+  s = s.replace(/[^a-z0-9]+/g, ' ');
+
+  const todas = s.split(' ').filter(function (w) { return w.length > 0; });
+  const utiles = todas.filter(function (w) { return !RUIDO[w] && w.length > 1; });
+
+  // Si al sacar el ruido no queda nada, mejor agrupar por el nombre entero que agrupar todo junto
+  const base = utiles.length > 0 ? utiles : todas;
+  return base.slice().sort().join(' ');
+}
+
+/* Devuelve una lista de grupos; cada grupo es un array de índices dentro de `visibles` */
+function armarGrupos(lista) {
+  const orden = [];
+  const mapa = {};
+  lista.forEach(function (r, i) {
+    const k = claveAgrupacion(r.name);
+    if (!mapa[k]) { mapa[k] = []; orden.push(k); }
+    mapa[k].push(i);
+  });
+  return orden.map(function (k) { return mapa[k]; });
+}
+
+function toggleGrupo(n, btn) {
+  const el = document.getElementById('grp' + n);
+  el.hidden = !el.hidden;
+  const cant = btn.getAttribute('data-n');
+  btn.textContent = el.hidden
+    ? '+' + cant + ' ' + (cant === '1' ? 'tienda' : 'tiendas') + ' ▾'
+    : 'ocultar ▴';
+}
+
+/* ============ filtrado, orden y render ============ */
+
+function filtrarTienda(nombre) {
+  tiendaActiva = nombre;
+  render();
+}
+
+function render() {
+  const texto = document.getElementById('filterInput').value.trim().toLowerCase();
+  const soloStock = document.getElementById('stockOnly').checked;
+  const orden = document.getElementById('sortSelect').value;
+
+  // Base: aplica texto y stock (pero NO tienda), así los contadores por tienda tienen sentido
+  const base = ultimosResultados.filter(function (r) {
+    if (texto && String(r.name).toLowerCase().indexOf(texto) === -1) return false;
+    if (soloStock && r.inStock === false) return false;
+    return true;
+  });
+
+  renderStoreFilter(base);
+
+  const lista = (tiendaActiva === 'todas' ? base : base.filter(function (r) { return r.site === tiendaActiva; }))
+    .slice()
+    .sort(function (a, b) {
+      if (orden === 'nombre') return String(a.name).localeCompare(String(b.name), 'es');
+      if (orden === 'tienda') {
+        const c = String(a.site).localeCompare(String(b.site), 'es');
+        if (c !== 0) return c;
+        const am = porMl(a) != null ? porMl(a) : Infinity;
+        const bm = porMl(b) != null ? porMl(b) : Infinity;
+        return am - bm;
+      }
+      if (orden === 'precio' || orden === 'precioDesc') {
+        const ap = a.price != null ? a.price : null;
+        const bp = b.price != null ? b.price : null;
+        if (ap === null && bp === null) return 0;
+        if (ap === null) return 1;   // los "sin precio" siempre al final
+        if (bp === null) return -1;
+        return orden === 'precio' ? ap - bp : bp - ap;
+      }
+      const am = porMl(a) != null ? porMl(a) : (a.price != null ? a.price : Infinity);
+      const bm = porMl(b) != null ? porMl(b) : (b.price != null ? b.price : Infinity);
+      return am - bm;
+    });
+
+  visibles = lista;
+  renderResultados(lista);
+  actualizarStatus();
+}
+
+/* La línea de arriba de los resultados. En modo agrupado el número de filas no
+   coincide con el de resultados, así que se dicen los dos. */
+function actualizarStatus() {
+  const total = ultimosResultados.length;
+  let txt = '<strong>' + visibles.length + '</strong> resultado' + (visibles.length === 1 ? '' : 's');
+  if (visibles.length !== total) txt += ' de ' + total;
+
+  if (visibles.length > 0 && document.getElementById('agruparChk').checked) {
+    const grupos = armarGrupos(visibles).length;
+    txt += ' · <strong>' + grupos + '</strong> perfume' + (grupos === 1 ? '' : 's') + ' distinto' + (grupos === 1 ? '' : 's');
+  }
+
+  if (ultimosErrores.length) {
+    txt += ' · <span class="err">No respondieron: ' + escapeHtml(ultimosErrores.join(' | ')) + '</span>';
+  }
+  document.getElementById('status').innerHTML = txt;
+}
+
+function renderStoreFilter(base) {
+  const cont = document.getElementById('storeFilter');
+  if (base.length === 0) { cont.innerHTML = ''; return; }
+
+  const cuenta = {};
+  base.forEach(function (r) { cuenta[r.site] = (cuenta[r.site] || 0) + 1; });
+
+  if (tiendaActiva !== 'todas' && !cuenta[tiendaActiva]) tiendaActiva = 'todas';
+
+  const tiendas = Object.keys(cuenta).sort(function (a, b) { return cuenta[b] - cuenta[a]; });
+
+  cont.innerHTML = '';
+  cont.appendChild(chipTienda('Todas', base.length, tiendaActiva === 'todas', 'todas'));
+  tiendas.forEach(function (t) {
+    cont.appendChild(chipTienda(t, cuenta[t], tiendaActiva === t, t));
+  });
+}
+
+/* Se arma con DOM y no con innerHTML para que un nombre con apóstrofe no rompa nada */
+function chipTienda(etiqueta, cantidad, activo, valor) {
+  const b = document.createElement('button');
+  b.className = 'store-chip' + (activo ? ' on' : '');
+  b.textContent = etiqueta + ' ';
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = cantidad;
+  b.appendChild(n);
+  b.addEventListener('click', function () { filtrarTienda(valor); });
+  return b;
+}
+
+function filaHtml(r, idx, rank, esMejor, extraMeta) {
+  const precioHtml = r.price != null
+    ? '<div class="amount">' + fmtPrice(r.price) + '</div>' +
+      (r.priceTransferencia != null
+        ? '<div class="transfer">' + fmtPrice(r.priceTransferencia) + ' transf. −' + r.pctTransferencia + '%</div>'
+        : '')
+    : '<div class="amount none">Ver precio</div>';
+
+  const perMl = r.pricePerMl != null
+    ? '<span class="badge perml">' + (r.mlEstimado ? '~' : '') + '$' +
+      Math.round(r.pricePerMl).toLocaleString('es-AR') + '/ml</span>'
+    : '';
+
+  const marcaOmitida = r.marcaOmitida
+    ? '<span class="badge aprox" title="Esta tienda no pone la marca en el nombre del producto; la coincidencia fue por el resto del nombre">≈ sin marca</span>'
+    : '';
+
+  const yaEsta = !!enCarrito[r.url];
+  const btnCarrito = '<button class="icon-btn' + (yaEsta ? ' added' : '') + '" onclick="agregarDesdeLista(' + idx + ', this)">' +
+                     (yaEsta ? '✓ En carrito' : '🛒 Añadir') + '</button>';
+
+  const btnComprar = r.site === 'West Import'
+    ? '<button class="icon-btn buy" onclick="irAlCarritoWest(' + idx + ')">🛒 Comprar</button>'
+    : '';
+
+  const rankHtml = rank != null
+    ? '<div class="rank">' + rank + '</div>'
+    : '<div class="rank blank">·</div>';
+
+  return '<article class="row' + (esMejor ? ' best' : '') + (r.inStock === false ? ' nostock' : '') + '">' +
+           rankHtml +
+           '<div class="main">' +
+             '<h3 class="name">' + escapeHtml(r.name) + '</h3>' +
+             '<div class="meta">' +
+               '<span class="store-name">' + escapeHtml(r.site) + '</span>' +
+               '<span class="badge ' + claveStock(r) + '" title="' + escapeHtml(tituloStock(r)) + '">' + textoStock(r) + '</span>' +
+               (esMejor ? '<span class="badge best-tag">MEJOR PRECIO</span>' : '') +
+               perMl + marcaOmitida + (extraMeta || '') +
+             '</div>' +
+           '</div>' +
+           '<div class="price">' + precioHtml + '</div>' +
+           '<div class="actions">' +
+             '<a class="icon-btn" href="' + escapeHtml(r.url) + '" target="_blank" rel="noopener">Ver ↗</a>' +
+             btnCarrito + btnComprar +
+           '</div>' +
+         '</article>';
+}
+
+function renderResultados(lista) {
+  const cont = document.getElementById('results');
+
+  if (lista.length === 0) {
+    cont.innerHTML = '<div class="empty"><strong>Nada por acá</strong>' +
+      (ultimosResultados.length ? 'Ningún resultado pasa los filtros actuales.' : 'Buscá un perfume para empezar.') +
+      '</div>';
+    return;
+  }
+
+  // El "mejor precio" se calcula sobre lo que se está viendo, no sobre todo
+  const conMl = lista.filter(function (r) { return porMl(r) != null; });
+  const mejorPorMl = conMl.length ? Math.min.apply(null, conMl.map(porMl)) : null;
+  const conPrecio = lista.filter(function (r) { return r.price != null; });
+  const mejorPrecio = conPrecio.length ? Math.min.apply(null, conPrecio.map(function (r) { return r.price; })) : null;
+
+  function esElMejor(r) {
+    return porMl(r) != null ? porMl(r) === mejorPorMl : (r.price != null && r.price === mejorPrecio);
+  }
+
+  if (!document.getElementById('agruparChk').checked) {
+    cont.innerHTML = lista.map(function (r, i) {
+      return filaHtml(r, i, i + 1, esElMejor(r), '');
+    }).join('');
+    return;
+  }
+
+  const grupos = armarGrupos(lista);
+
+  cont.innerHTML = grupos.map(function (idxs, g) {
+    const principal = idxs[0];
+    const resto = idxs.slice(1);
+    const n = g + 1;
+
+    const extra = resto.length
+      ? '<button class="more" data-n="' + resto.length + '" onclick="toggleGrupo(' + n + ', this)">+' +
+        resto.length + ' ' + (resto.length === 1 ? 'tienda' : 'tiendas') + ' ▾</button>'
+      : '';
+
+    let html = '<div class="group">' + filaHtml(lista[principal], principal, n, esElMejor(lista[principal]), extra);
+
+    if (resto.length) {
+      html += '<div class="children" id="grp' + n + '" hidden>' +
+        resto.map(function (i) { return filaHtml(lista[i], i, null, esElMejor(lista[i]), ''); }).join('') +
+        '</div>';
+    }
+
+    return html + '</div>';
+  }).join('');
+}
+
+/* ============ favoritos ============ */
+
+function cargarFavoritos() {
+  document.getElementById('favList').innerHTML = '<div class="panel-empty">Cargando...</div>';
+  google.script.run.withSuccessHandler(renderFavoritos).listarFavoritos();
+}
+
+function renderFavoritos(data) {
+  favoritos = data || [];
+  const badge = document.getElementById('favCount');
+  badge.textContent = favoritos.length;
+  badge.hidden = favoritos.length === 0;
+
+  const el = document.getElementById('favList');
+  if (favoritos.length === 0) {
+    el.innerHTML = '<div class="panel-empty">Todavía no guardaste ninguna búsqueda.</div>';
+    return;
+  }
+
+  el.innerHTML = favoritos.map(function (f, i) {
+    return '<div class="list-item">' +
+             '<div class="list-info">' +
+               '<div class="list-name">' + escapeHtml(f.query) + '</div>' +
+               (f.precioObjetivo
+                 ? '<div class="list-target">Avisar si baja de $' + Number(f.precioObjetivo).toLocaleString('es-AR') + '</div>'
+                 : '<div class="list-sub">Sin alerta de precio</div>') +
+             '</div>' +
+             '<div class="list-actions">' +
+               '<button class="mini-btn" onclick="buscarFavorito(' + i + ')">Buscar</button>' +
+               '<button class="mini-btn danger" onclick="borrarFavorito(' + i + ')">✕</button>' +
+             '</div>' +
+           '</div>';
+  }).join('');
+}
+
+function guardarFavoritoActual() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) { alert('Primero escribí algo en el buscador.'); return; }
+
+  const precio = prompt('¿Precio objetivo para avisarte por email?\n(dejá vacío si solo querés guardarlo sin alerta)');
+  if (precio === null) return;
+
+  const precioLimpio = precio.trim() ? precio.replace(/\D/g, '') : '';
+  google.script.run.withSuccessHandler(function (data) {
+    renderFavoritos(data);
+    alert('Guardado ✓');
+  }).agregarFavorito(q, precioLimpio);
+}
+
+function buscarFavorito(i) {
+  document.getElementById('searchInput').value = favoritos[i].query;
+  onSearchInput();
+  buscar();
+}
+
+function borrarFavorito(i) {
+  google.script.run.withSuccessHandler(renderFavoritos).eliminarFavorito(favoritos[i].query);
+}
+
+/* ============ carrito ============ */
+
+function cargarCarrito() {
+  google.script.run.withSuccessHandler(renderCarrito).listarCarrito();
+}
+
+function agregarDesdeLista(i, btn) {
+  const item = visibles[i];
+  if (!item) return;
+  btn.disabled = true;
+  btn.textContent = '...';
+  google.script.run.withSuccessHandler(function (data) {
+    renderCarrito(data);
+    btn.disabled = false;
+    btn.textContent = '✓ En carrito';
+    btn.classList.add('added');
+  }).agregarAlCarrito(item);
+}
+
+function renderCarrito(data) {
+  carritoCache = data || [];
+
+  enCarrito = {};
+  carritoCache.forEach(function (i) { enCarrito[i.url] = true; });
+
+  const unidades = carritoCache.reduce(function (s, i) { return s + Number(i.cantidad || 1); }, 0);
+  const badge = document.getElementById('cartCount');
+  badge.textContent = unidades;
+  badge.hidden = unidades === 0;
+
+  const el = document.getElementById('cartList');
+  if (carritoCache.length === 0) {
+    el.innerHTML = '<div class="panel-empty">Tu carrito está vacío.</div>';
+    return;
+  }
+
+  const subtotales = {};
+  let total = 0;
+
+  const itemsHtml = carritoCache.map(function (item, i) {
+    const linea = (item.price || 0) * item.cantidad;
+    total += linea;
+    subtotales[item.site] = (subtotales[item.site] || 0) + linea;
+
+    return '<div class="list-item">' +
+             '<div class="list-info">' +
+               '<div class="list-name">' + escapeHtml(item.name) + '</div>' +
+               '<div class="list-sub">' + escapeHtml(item.site) +
+                 ' · <a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener" style="color:var(--accent)">Ver ↗</a>' +
+               '</div>' +
+             '</div>' +
+             '<div class="list-actions">' +
+               '<button class="qty-btn" onclick="cambiarCantidad(' + i + ', -1)">−</button>' +
+               '<span class="qty">' + item.cantidad + '</span>' +
+               '<button class="qty-btn" onclick="cambiarCantidad(' + i + ', 1)">+</button>' +
+               '<span class="line-price">' + (item.price != null ? fmtPrice(linea) : '—') + '</span>' +
+               '<button class="remove-btn" onclick="quitarDelCarrito(' + i + ')">✕</button>' +
+             '</div>' +
+           '</div>';
+  }).join('');
+
+  const subtotalesHtml = Object.keys(subtotales).map(function (site) {
+    return '<div class="summary-line"><span>' + escapeHtml(site) + '</span><span>' + fmtPrice(subtotales[site]) + '</span></div>';
+  }).join('');
+
+  const itemsWest = carritoCache.filter(function (i) { return i.site === 'West Import'; });
+  const botonWest = itemsWest.length
+    ? '<button class="btn wide-btn" onclick="irAlCarritoMultipleWest()">🛒 Enviar ' + itemsWest.length +
+      ' producto(s) al carrito de West Import</button>'
+    : '';
+
+  el.innerHTML = itemsHtml + botonWest +
+    '<div class="summary">' + subtotalesHtml +
+      '<div class="summary-total"><span>Total</span><span>' + fmtPrice(total) + '</span></div>' +
+    '</div>' +
+    '<button class="mini-btn danger" style="margin-top:12px" onclick="vaciarCarritoConfirm()">Vaciar carrito</button>';
+}
+
+function cambiarCantidad(i, delta) {
+  const item = carritoCache[i];
+  if (!item) return;
+  const nueva = Number(item.cantidad) + delta;
+  if (nueva < 1) return;
+  google.script.run.withSuccessHandler(renderCarrito).actualizarCantidadCarrito(item.id, nueva);
+}
+
+function quitarDelCarrito(i) {
+  const item = carritoCache[i];
+  if (!item) return;
+  google.script.run.withSuccessHandler(renderCarrito).eliminarDelCarrito(item.id);
+}
+
+function vaciarCarritoConfirm() {
+  if (!confirm('¿Vaciar todo el carrito?')) return;
+  google.script.run.withSuccessHandler(renderCarrito).vaciarCarrito();
+}
+
+/* ============ compra directa West Import ============ */
+
+function irAlCarritoWest(i) {
+  const r = visibles[i];
+  if (!r) return;
+  google.script.run.withSuccessHandler(function (link) {
+    if (link) {
+      window.open(link, '_blank');
+    } else {
+      alert('No pude armar el link directo, abro el producto.');
+      window.open(r.url, '_blank');
+    }
+  }).obtenerLinkCarritoShopify(r.url, 1);
+}
+
+function irAlCarritoMultipleWest() {
+  const itemsWest = carritoCache
+    .filter(function (i) { return i.site === 'West Import'; })
+    .map(function (i) { return { url: i.url, cantidad: i.cantidad }; });
+
+  google.script.run.withSuccessHandler(function (link) {
+    if (link) window.open(link, '_blank');
+    else alert('No pude armar el link. Intentá agregarlos de a uno.');
+  }).obtenerLinkCarritoMultipleWest(itemsWest);
+}
+
+/* ============ tiendas ============ */
+
+function renderSitios(lista) {
+  if (lista && lista.length) SITIOS = lista;
+  document.getElementById('storeLinks').innerHTML = SITIOS.map(function (s) {
+    return '<a class="store-link" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">🔗 ' +
+           escapeHtml(s.name) + '</a>';
+  }).join('');
+  document.getElementById('subtitle').textContent =
+    'Precio y stock en ' + SITIOS.length + ' tiendas, de una';
+}
+
+function cargarConfig() {
+  renderSitios(null);  // pinta el fallback ya mismo
+  renderChips();
+  google.script.run
+    .withSuccessHandler(function (cfg) {
+      if (!cfg) return;
+      renderSitios(cfg.sitios);
+      if (cfg.marcas && cfg.marcas.length) {
+        MARCAS = cfg.marcas;
+        RUIDO = construirRuido();   // las marcas también son ruido al agrupar
+        renderChips();
+      }
+    })
+    .withFailureHandler(function () { /* backend viejo: quedan las listas de fallback */ })
+    .listarConfig();
+}
+
+/* ============ arranque ============ */
+
+window.addEventListener('scroll', function () {
+  document.getElementById('toTop').classList.toggle('visible', window.scrollY > 500);
+});
+
+if (window.matchMedia) {
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  const alCambiar = function () { if (!temaElegido) aplicarTema(); };
+  if (mq.addEventListener) mq.addEventListener('change', alCambiar);
+  else if (mq.addListener) mq.addListener(alCambiar);
+}
+
+aplicarPrefs();
+cargarConfig();
+cargarCarrito();
+cargarFavoritos();
+document.getElementById('searchInput').focus();
+</script>
+</body>
+</html>
