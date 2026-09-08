@@ -43,6 +43,17 @@ const SITES = [
  * Sirve la página web (sin ?q=) o el JSON de resultados (con ?q=).
  * Se mantiene el modo JSON por si querés pegarle a la URL directo para probar.
  */
+/**
+ * Permite usar la web app como API: /exec?q=khamrah devuelve el JSON crudo.
+ * La función se llamaba desde doGet pero no estaba definida, así que ese camino
+ * venía tirando error; la pantalla normal (sin ?q=) nunca pasó por acá.
+ */
+function jsonResponse_(datos) {
+  return ContentService
+    .createTextOutput(JSON.stringify(datos))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doGet(e) {
   const query = (e && e.parameter && e.parameter.q || '').trim();
 
@@ -227,7 +238,14 @@ function esRelevante_(name, query) {
   return palabras.every(function (palabra) { return nameLower.includes(palabra); });
 }
 
+// La planilla abierta, reusada durante toda una ejecución. Cada obtenerSheet_()
+// hacía un openById más cuatro getSheetByName, y una sola acción del usuario la
+// llamaba dos o tres veces.
+let _ssCache = null;
+
 function obtenerSheet_() {
+  if (_ssCache) return _ssCache;
+
   const props = PropertiesService.getScriptProperties();
   let sheetId = props.getProperty('SHEET_ID');
   let ss;
@@ -256,12 +274,83 @@ function obtenerSheet_() {
     const histSheet = ss.insertSheet('Historial');
     histSheet.appendRow(['Fecha', 'Búsqueda', 'Sitio', 'Nombre', 'Precio', 'En stock', 'URL']);
   }
-  if (!ss.getSheetByName('Carrito')) {
-    const carritoSheet = ss.insertSheet('Carrito');
-    carritoSheet.appendRow(['ID', 'Nombre', 'Sitio', 'Precio', 'Cantidad', 'URL', 'Fecha agregado']);
+  if (!ss.getSheetByName('Seguimiento')) {
+    const segSheet = ss.insertSheet('Seguimiento');
+    segSheet.appendRow(COLUMNAS_SEGUIMIENTO);
+    migrarCarritoASeguimiento_(ss, segSheet);
+  } else {
+    asegurarColumnasSeguimiento_(ss.getSheetByName('Seguimiento'));
   }
 
+  _ssCache = ss;
   return ss;
+}
+
+const COLUMNAS_SEGUIMIENTO = ['ID', 'Nombre', 'Sitio', 'URL', 'Precio inicial', 'Precio actual',
+                              'Precio objetivo', 'Prioridad', 'Fecha agregado', 'Última revisión',
+                              'Última alerta', 'Precio anterior', 'Precio mínimo', 'Precio máximo'];
+
+/**
+ * Las tres últimas columnas se agregaron después. Si la planilla es de antes,
+ * se le escriben los encabezados y se arranca el mínimo y el máximo con el
+ * precio que cada producto tenga hoy: no hay historia previa que inventar.
+ */
+function asegurarColumnasSeguimiento_(sheet) {
+  const anchoActual = sheet.getLastColumn();
+  if (anchoActual >= COLUMNAS_SEGUIMIENTO.length) return;
+
+  sheet.getRange(1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([COLUMNAS_SEGUIMIENTO]);
+
+  const ultima = sheet.getLastRow();
+  if (ultima < 2) return;
+
+  const actuales = sheet.getRange(2, 6, ultima - 1, 1).getValues();
+  const nuevas = actuales.map(function (f) {
+    const precio = f[0] === '' ? '' : Number(f[0]);
+    return ['', precio, precio];   // anterior, mínimo, máximo
+  });
+  sheet.getRange(2, 12, nuevas.length, 3).setValues(nuevas);
+}
+
+/**
+ * El carrito viejo guardaba productos con cantidad, para hacer una cuenta.
+ * Ahora esos mismos productos son cosas que se siguen, así que se pasan tal cual:
+ * el precio con el que estaban cargados pasa a ser el precio inicial, que es
+ * contra el que después se compara para saber si bajó.
+ */
+function migrarCarritoASeguimiento_(ss, segSheet) {
+  const viejo = ss.getSheetByName('Carrito');
+  if (!viejo) return;
+
+  const data = viejo.getDataRange().getValues();
+  const filas = [];
+
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    const precio = data[i][3] === '' ? '' : Number(data[i][3]);
+    filas.push([
+      data[i][0],           // ID
+      data[i][1],           // Nombre
+      data[i][2],           // Sitio
+      data[i][5],           // URL
+      precio,               // Precio inicial (el que tenía cuando lo agregaste)
+      precio,               // Precio actual
+      '',                   // Precio objetivo
+      PRIORIDAD_NORMAL,     // Prioridad
+      data[i][6] || new Date(),
+      '',                   // Última revisión
+      '',                   // Última alerta
+      '',                   // Precio anterior
+      precio,               // Precio mínimo
+      precio,               // Precio máximo
+    ]);
+  }
+
+  if (filas.length) {
+    segSheet.getRange(2, 1, filas.length, COLUMNAS_SEGUIMIENTO.length).setValues(filas);
+  }
+  // La pestaña vieja se deja quieta: si algo salió mal, los datos siguen ahí.
+  viejo.setName('Carrito (viejo)');
 }
 
 function agregarFavorito(query, precioObjetivo) {
@@ -271,7 +360,7 @@ function agregarFavorito(query, precioObjetivo) {
 
   // Si ya existe esa búsqueda, actualizamos el precio objetivo en vez de duplicar
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toLowerCase() === query.toLowerCase()) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
       sheet.getRange(i + 1, 2).setValue(precioObjetivo || '');
       return listarFavoritos();
     }
@@ -304,7 +393,7 @@ function eliminarFavorito(query) {
   const data = sheet.getDataRange().getValues();
 
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toLowerCase() === query.toLowerCase()) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
       sheet.deleteRow(i + 1);
       break;
     }
@@ -313,70 +402,244 @@ function eliminarFavorito(query) {
   return listarFavoritos();
 }
 
+/**
+ * La revisión diaria. El disparador ya creado apunta a este nombre, así que no
+ * se renombra aunque ahora haga dos cosas: las búsquedas guardadas y los
+ * productos que estás siguiendo.
+ */
 function revisarFavoritosYAlertar() {
-  const favoritos = listarFavoritos();
-  if (favoritos.length === 0) return;
+  const alertas = { busquedas: revisarFavoritos_(), productos: revisarSeguimiento_() };
 
-  const ss = obtenerSheet_();
-  const histSheet = ss.getSheetByName('Historial');
+  if (alertas.busquedas.length || alertas.productos.length) {
+    enviarEmailAlertas_(alertas);
+  }
+}
+
+function revisarFavoritos_() {
+  const favoritos = listarFavoritos();
+  if (favoritos.length === 0) return [];
+
+  const histSheet = obtenerSheet_().getSheetByName('Historial');
   const ahora = new Date();
-  const alertasPorFavorito = [];
+  const alertas = [];
 
   favoritos.forEach(function (fav) {
     const resultado = buscarTodos_(fav.query);
 
-    resultado.results.forEach(function (item) {
-      histSheet.appendRow([ahora, fav.query, item.site, item.name, item.price, item.inStock, item.url]);
-    });
+    // Se guarda una sola fila por día y por búsqueda: la mejor oferta del día.
+    // Antes se guardaban TODOS los resultados de todas las tiendas, y con unos
+    // pocos favoritos eran cientos de miles de filas por año que nadie leía.
+    const mejor = mejorOferta_(resultado.results);
+    if (mejor) {
+      histSheet.appendRow([ahora, fav.query, mejor.site, mejor.name,
+                           precioEfectivo_(mejor), mejor.inStock, mejor.url]);
+    }
 
-    if (fav.precioObjetivo) {
-      const cumplen = resultado.results
-        .filter(function (r) { return r.inStock && r.price != null && r.price <= Number(fav.precioObjetivo); })
-        .sort(function (a, b) { return a.price - b.price; });
+    if (!fav.precioObjetivo) return;
 
-      if (cumplen.length > 0) {
-        // Armamos una "huella" de lo que encontramos hoy (sitio + precio de cada uno)
-        const huellaActual = JSON.stringify(cumplen.map(function (i) { return i.site + ':' + i.price; }));
-        const huellaAnterior = obtenerUltimaAlerta_(fav.query);
+    const cumplen = resultado.results
+      .filter(function (r) {
+        // `inStock !== false` y no `inStock`: desde que el stock dice la verdad,
+        // null significa "no se sabe", y descartarlo dejaba afuera tiendas
+        // enteras (Empretienda no publica stock en el listado).
+        return r.inStock !== false && precioEfectivo_(r) != null &&
+               precioEfectivo_(r) <= Number(fav.precioObjetivo);
+      })
+      .sort(function (a, b) { return precioEfectivo_(a) - precioEfectivo_(b); });
 
-        // Solo avisamos si cambió algo respecto a la última vez que mandamos mail
-        if (huellaActual !== huellaAnterior) {
-          alertasPorFavorito.push({ query: fav.query, objetivo: fav.precioObjetivo, items: cumplen });
-          guardarUltimaAlerta_(fav.query, huellaActual);
-        }
-      } else {
-        // Si ya nadie cumple el objetivo, reseteamos la huella para que el día
-        // que vuelva a cumplirse (aunque sea el mismo precio de antes), avise de nuevo
-        guardarUltimaAlerta_(fav.query, '');
-      }
+    if (cumplen.length === 0) {
+      // Si ya nadie cumple el objetivo, se borra la huella para que el día que
+      // vuelva a cumplirse (aunque sea al mismo precio) avise de nuevo.
+      guardarUltimaAlerta_(fav.query, '');
+      return;
+    }
+
+    const huellaActual = JSON.stringify(cumplen.map(function (i) { return i.site + ':' + precioEfectivo_(i); }));
+    if (huellaActual !== obtenerUltimaAlerta_(fav.query)) {
+      alertas.push({ query: fav.query, objetivo: fav.precioObjetivo, items: cumplen });
+      guardarUltimaAlerta_(fav.query, huellaActual);
     }
 
     Utilities.sleep(1000);
   });
 
-  if (alertasPorFavorito.length > 0) {
-    enviarEmailAlertas_(alertasPorFavorito);
-  }
+  return alertas;
 }
 
-function enviarEmailAlertas_(alertasPorFavorito) {
-  const bloques = alertasPorFavorito.map(function (a) {
-    const lineasItems = a.items.map(function (item, i) {
-      const etiqueta = i === 0 ? '🏆 MÁS BARATO' : '';
-      return '  • ' + item.site + ': $' + item.price.toLocaleString('es-AR') + ' ' + etiqueta + '\n    ' + item.url;
-    }).join('\n\n');
+function mejorOferta_(items) {
+  const conPrecio = items.filter(function (r) {
+    return r.inStock !== false && precioEfectivo_(r) != null;
+  });
+  if (!conPrecio.length) return null;
+  return conPrecio.sort(function (a, b) {
+    const am = a.pricePerMlTransferencia != null ? a.pricePerMlTransferencia : a.pricePerMl;
+    const bm = b.pricePerMlTransferencia != null ? b.pricePerMlTransferencia : b.pricePerMl;
+    return (am == null ? Infinity : am) - (bm == null ? Infinity : bm);
+  })[0];
+}
 
-    return '🎯 "' + a.query + '" (objetivo: $' + Number(a.objetivo).toLocaleString('es-AR') + ')\n\n' + lineasItems;
-  }).join('\n\n' + '─'.repeat(40) + '\n\n');
+/**
+ * Vuelve a mirar el precio de cada producto seguido.
+ *
+ * En vez de abrir la ficha (haría falta un lector de precios distinto por
+ * plataforma), se repite la búsqueda EN SU PROPIA TIENDA y se busca el producto
+ * por URL. Así se reusan los scrapers que ya están probados, y es una sola
+ * tienda por producto en lugar de las trece.
+ */
+function revisarSeguimiento_() {
+  return refrescarPrecios_(true);
+}
 
-  const totalOpciones = alertasPorFavorito.reduce(function (sum, a) { return sum + a.items.length; }, 0);
+/**
+ * Vuelve a mirar los precios desde la pantalla, sin mandar mail y sin marcar
+ * nada como avisado: si hoy un producto llegó a tu objetivo, el mail de las 9
+ * tiene que salir igual aunque hayas tocado el botón antes.
+ */
+function actualizarPreciosSeguimiento() {
+  refrescarPrecios_(false);
+  return listarSeguimiento();
+}
 
+function refrescarPrecios_(conAlertas) {
+  const seguidos = listarSeguimiento();
+  if (seguidos.length === 0) return [];
+
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
+  const filas = sheet.getDataRange().getValues();
+  const histSheet = obtenerSheet_().getSheetByName('Historial');
+  const ahora = new Date();
+  const alertas = [];
+  const cache = {};   // una misma búsqueda sirve para varios productos de la misma tienda
+
+  seguidos.forEach(function (seg) {
+    const site = sitioPorNombre_(seg.site);
+    if (!site) return;
+
+    const consulta = consultaDeSeguimiento_(seg.name);
+    const clave = site.id + '|' + consulta;
+
+    if (cache[clave] === undefined) {
+      try {
+        cache[clave] = buscarEnSitio_(site, consulta);
+      } catch (err) {
+        cache[clave] = null;   // la tienda no respondió: hoy no se sabe
+      }
+      Utilities.sleep(500);
+    }
+    const encontrados = cache[clave];
+    if (!encontrados) return;
+
+    const match = encontrados.filter(function (r) { return r.url === seg.url; })[0];
+    if (!match) return;   // ya no aparece: se deja el precio anterior, no se inventa
+
+    const precioHoy = precioEfectivo_(match);
+    if (precioHoy == null) return;
+
+    const fila = indiceDeFila_(filas, seg.id);
+    if (fila > 0) {
+      // Una sola escritura con toda la fila en vez de cinco sueltas: con varios
+      // productos seguidos, cada llamada a la planilla se nota.
+      const nueva = filas[fila].slice();
+      nueva[5]  = precioHoy;                                  // precio actual
+      nueva[9]  = ahora;                                      // última revisión
+      nueva[11] = seg.precioActual == null ? '' : seg.precioActual;  // el de antes de hoy
+      nueva[12] = seg.precioMin == null ? precioHoy : Math.min(seg.precioMin, precioHoy);
+      nueva[13] = seg.precioMax == null ? precioHoy : Math.max(seg.precioMax, precioHoy);
+      sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([nueva]);
+      filas[fila] = nueva;   // para que la marca de alerta de más abajo no pise esto
+    }
+    histSheet.appendRow([ahora, seg.name, seg.site, match.name, precioHoy, match.inStock, seg.url]);
+
+    if (!conAlertas) return;
+
+    // Avisa si llegó al objetivo o, sin objetivo, si bajó al menos un 5% del
+    // precio con el que lo empezaste a seguir. El umbral evita que un redondeo
+    // de la tienda mande un mail todos los días.
+    const llegoAlObjetivo = seg.precioObjetivo != null && precioHoy <= seg.precioObjetivo;
+    const bajoSolo = seg.precioObjetivo == null && seg.precioInicial &&
+                     precioHoy <= seg.precioInicial * 0.95;
+    if (!llegoAlObjetivo && !bajoSolo) return;
+
+    const huella = String(precioHoy);
+    if (fila > 0 && String(filas[fila][10]) === huella) return;   // ya se avisó a este precio
+
+    alertas.push({
+      name: seg.name, site: seg.site, url: seg.url,
+      precioInicial: seg.precioInicial, precioHoy: precioHoy,
+      objetivo: seg.precioObjetivo, enStock: match.inStock,
+    });
+    if (fila > 0) {
+      sheet.getRange(fila + 1, 11).setValue(huella);
+      filas[fila][10] = huella;
+    }
+  });
+
+  return alertas;
+}
+
+function indiceDeFila_(filas, id) {
+  for (let i = 1; i < filas.length; i++) {
+    if (filas[i][0] === id) return i;
+  }
+  return -1;
+}
+
+/** Las dos palabras más largas del nombre: suelen ser las que identifican al perfume. */
+function consultaDeSeguimiento_(nombre) {
+  const palabras = String(nombre).replace(/[^\wáéíóúñÁÉÍÓÚÑ ]/g, ' ').split(/\s+/)
+    .filter(function (w) { return w.length > 2 && !/^\d+$/.test(w); });
+  palabras.sort(function (a, b) { return b.length - a.length; });
+  return palabras.slice(0, 2).join(' ') || String(nombre);
+}
+
+
+const NL = '\n';
+const SEPARADOR   = NL + NL + '─'.repeat(40) + NL + NL;
+const SEPARADOR_2 = NL + NL + '═'.repeat(40) + NL + NL;
+
+function enviarEmailAlertas_(alertas) {
+  const partes = [];
+
+  if (alertas.busquedas.length) {
+    const bloques = alertas.busquedas.map(function (a) {
+      const items = a.items.map(function (item, i) {
+        return '  • ' + item.site + ': ' + pesos_(precioEfectivo_(item)) +
+               (item.priceTransferencia != null ? ' (con transferencia)' : '') +
+               (i === 0 ? '   ← el más barato' : '') + NL + '    ' + item.url;
+      }).join(NL + NL);
+      return '🎯 "' + a.query + '" (objetivo: ' + pesos_(a.objetivo) + ')' + NL + NL + items;
+    }).join(SEPARADOR);
+
+    partes.push('BÚSQUEDAS GUARDADAS' + NL + NL +
+                'Estas tiendas están por debajo de tu precio objetivo:' + NL + NL + bloques);
+  }
+
+  if (alertas.productos.length) {
+    const bloques = alertas.productos.map(function (a) {
+      const motivo = a.objetivo != null
+        ? 'llegó a tu objetivo de ' + pesos_(a.objetivo)
+        : 'bajó desde ' + pesos_(a.precioInicial);
+      return '📉 ' + a.name + NL +
+             '   ' + a.site + ' — ahora ' + pesos_(a.precioHoy) + ', ' + motivo +
+             (a.enStock === false ? NL + '   OJO: la tienda lo da como SIN STOCK' : '') +
+             NL + '   ' + a.url;
+    }).join(NL + NL);
+
+    partes.push('PRODUCTOS QUE SEGUÍS' + NL + NL + bloques);
+  }
+
+  const cuantos = alertas.busquedas.length + alertas.productos.length;
   MailApp.sendEmail({
     to: emailAlertas_(),
-    subject: '🧴 ' + totalOpciones + ' oferta(s) en ' + alertasPorFavorito.length + ' perfume(s) de tu lista',
-    body: 'Estos son los sitios que están por debajo de tu precio objetivo:\n\n' + bloques,
+    subject: '🧴 ' + cuantos + (cuantos === 1 ? ' novedad' : ' novedades') + ' en tu lista de perfumes',
+    body: partes.join(SEPARADOR_2) + NL,
   });
 }
+
+function pesos_(n) {
+  return n == null ? '—' : '$' + Math.round(Number(n)).toLocaleString('es-AR');
+}
+
 
 function activarRevisionDiaria() {
   // Primero borramos triggers viejos de esta función, para no duplicar
@@ -401,7 +664,7 @@ function obtenerUltimaAlerta_(query) {
   const data = sheet.getDataRange().getValues();
 
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toLowerCase() === query.toLowerCase()) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
       return data[i][3] || '';
     }
   }
@@ -414,46 +677,100 @@ function guardarUltimaAlerta_(query, valor) {
   const data = sheet.getDataRange().getValues();
 
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toLowerCase() === query.toLowerCase()) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
       sheet.getRange(i + 1, 4).setValue(valor);
       break;
     }
   }
 }
 
-function agregarAlCarrito(item) {
-  const ss = obtenerSheet_();
-  const sheet = ss.getSheetByName('Carrito');
-  const id = Utilities.getUuid();
+const PRIORIDAD_ALTA   = 1;
+const PRIORIDAD_NORMAL = 2;
+const PRIORIDAD_BAJA   = 3;
 
-  sheet.appendRow([id, item.name, item.site, item.price, item.cantidad || 1, item.url, new Date()]);
-  return listarCarrito();
+/**
+ * Lo que realmente se paga: si la tienda hace descuento por transferencia, ese
+ * es el precio. Es el mismo criterio con el que se ordena la lista en pantalla,
+ * así que la alerta y el orden hablan del mismo número.
+ */
+function precioEfectivo_(item) {
+  if (item.priceTransferencia != null) return Number(item.priceTransferencia);
+  return item.price != null ? Number(item.price) : null;
 }
 
-function listarCarrito() {
-  const ss = obtenerSheet_();
-  const sheet = ss.getSheetByName('Carrito');
+function filaASeguido_(fila) {
+  return {
+    id:             fila[0],
+    name:           fila[1],
+    site:           fila[2],
+    url:            fila[3],
+    precioInicial:  fila[4] === '' ? null : Number(fila[4]),
+    precioActual:   fila[5] === '' ? null : Number(fila[5]),
+    precioObjetivo: fila[6] === '' ? null : Number(fila[6]),
+    prioridad:      Number(fila[7]) || PRIORIDAD_NORMAL,
+    ultimaRevision: fila[9] ? String(fila[9]) : null,
+    precioAnterior: fila[11] === '' || fila[11] == null ? null : Number(fila[11]),
+    precioMin:      fila[12] === '' || fila[12] == null ? null : Number(fila[12]),
+    precioMax:      fila[13] === '' || fila[13] == null ? null : Number(fila[13]),
+  };
+}
+
+function listarSeguimiento() {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const data = sheet.getDataRange().getValues();
-  const carrito = [];
+  const salida = [];
 
   for (let i = 1; i < data.length; i++) {
     if (!data[i][0]) continue;
-    carrito.push({
-      id: data[i][0],
-      name: data[i][1],
-      site: data[i][2],
-      price: data[i][3],
-      cantidad: data[i][4] || 1,
-      url: data[i][5],
-    });
+    salida.push(filaASeguido_(data[i]));
   }
 
-  return carrito;
+  // Primero lo prioritario y, dentro de cada nivel, lo que más bajó de precio
+  salida.sort(function (a, b) {
+    if (a.prioridad !== b.prioridad) return a.prioridad - b.prioridad;
+    return bajaPorcentual_(b) - bajaPorcentual_(a);
+  });
+  return salida;
 }
 
-function eliminarDelCarrito(id) {
-  const ss = obtenerSheet_();
-  const sheet = ss.getSheetByName('Carrito');
+/** Cuánto bajó desde que lo empezaste a seguir, en por ciento. 0 si no se puede saber. */
+function bajaPorcentual_(seguido) {
+  if (!seguido.precioInicial || seguido.precioActual == null) return 0;
+  return (1 - seguido.precioActual / seguido.precioInicial) * 100;
+}
+
+/**
+ * Empieza a seguir un producto. Si ya lo seguías, no lo duplica: actualiza el
+ * precio actual y devuelve la lista como está.
+ */
+function agregarASeguimiento(item) {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
+  const data = sheet.getDataRange().getValues();
+  const precio = precioEfectivo_(item);
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][3] === item.url) {
+      if (precio != null) sheet.getRange(i + 1, 6).setValue(precio);
+      return listarSeguimiento();
+    }
+  }
+
+  sheet.appendRow([
+    Utilities.getUuid(), item.name, item.site, item.url,
+    precio == null ? '' : precio,   // precio inicial
+    precio == null ? '' : precio,   // precio actual
+    item.precioObjetivo == null ? '' : Number(item.precioObjetivo),
+    item.prioridad || PRIORIDAD_NORMAL,
+    new Date(), '', '',
+    '',                             // precio anterior: todavía no hubo revisión
+    precio == null ? '' : precio,   // mínimo
+    precio == null ? '' : precio,   // máximo
+  ]);
+  return listarSeguimiento();
+}
+
+function eliminarDeSeguimiento(id) {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const data = sheet.getDataRange().getValues();
 
   for (let i = 1; i < data.length; i++) {
@@ -462,34 +779,46 @@ function eliminarDelCarrito(id) {
       break;
     }
   }
-
-  return listarCarrito();
+  return listarSeguimiento();
 }
 
-function actualizarCantidadCarrito(id, cantidad) {
-  const ss = obtenerSheet_();
-  const sheet = ss.getSheetByName('Carrito');
-  const data = sheet.getDataRange().getValues();
+/**
+ * Cambia el precio objetivo o la prioridad. Solo toca lo que venga en `campos`.
+ *
+ * No devuelve la lista a propósito: la pantalla ya se pintó con el cambio antes
+ * de llamar acá, y volver a leer y mandar toda la planilla era la mitad de la
+ * demora. Tampoco lee todas las columnas: le alcanza con la de los IDs.
+ */
+function actualizarSeguimiento(id, campos) {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
+  const ultima = sheet.getLastRow();
+  if (ultima < 2) return;
 
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === id) {
-      sheet.getRange(i + 1, 5).setValue(cantidad);
-      break;
+  const ids = sheet.getRange(2, 1, ultima - 1, 1).getValues();
+
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i][0] !== id) continue;
+    const fila = i + 2;
+
+    if (campos && campos.precioObjetivo !== undefined) {
+      const v = campos.precioObjetivo;
+      sheet.getRange(fila, 7).setValue(v === null || v === '' ? '' : Number(v));
+      sheet.getRange(fila, 11).setValue('');   // el objetivo cambió: la alerta vieja ya no vale
     }
+    if (campos && campos.prioridad !== undefined) {
+      sheet.getRange(fila, 8).setValue(Number(campos.prioridad) || PRIORIDAD_NORMAL);
+    }
+    return;
   }
-
-  return listarCarrito();
 }
 
-function vaciarCarrito() {
-  const ss = obtenerSheet_();
-  const sheet = ss.getSheetByName('Carrito');
+function vaciarSeguimiento() {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const lastRow = sheet.getLastRow();
-  if (lastRow > 1) {
-    sheet.deleteRows(2, lastRow - 1);
-  }
-  return listarCarrito();
+  if (lastRow > 1) sheet.deleteRows(2, lastRow - 1);
+  return listarSeguimiento();
 }
+
 
 /* =========================================================
  * SHOPIFY (West Import)

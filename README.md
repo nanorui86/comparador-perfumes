@@ -12,13 +12,18 @@ No hay build, no hay dependencias, no hay servidor propio.
 - Ordena por **precio por mililitro**, que es la comparación honesta entre frascos de distinto
   tamaño. Cuando el tamaño no figura en el nombre asume 100 ml y lo marca con `~`.
 - Contempla el **descuento por transferencia** de cada tienda y ordena con el precio real.
-- **Agrupa el mismo perfume** vendido por distintas tiendas en una sola fila, ignorando la
-  marca y el tamaño al comparar los nombres.
+- **Agrupa el mismo perfume** vendido por distintas tiendas en una sola fila. Para decidir si
+  dos son el mismo, ignora la marca y el vocabulario de perfumería y compara el resto de las
+  palabras sin importar el orden. El tamaño **sí** separa: un 50 ml y un 100 ml no son
+  intercambiables.
 - **Verifica el stock** contra la ficha real del producto en las tiendas que no lo publican
   de forma confiable en el listado.
 - Filtra decants y muestras, que no son comparables con un frasco.
-- Guarda favoritos con precio objetivo y avisa por mail cuando alguna tienda baja.
-- Arma un carrito propio, con link directo al carrito real en West Import.
+- Guarda **búsquedas favoritas** con precio objetivo y avisa por mail cuando alguna tienda baja.
+- **Sigue productos puntuales**: guarda con qué precio entró cada uno, mide su mínimo y su
+  máximo, y avisa cuando llega a tu objetivo (o baja un 5%, si no le pusiste objetivo).
+- Una **lista de prioridad** siempre visible con lo que estás por comprar.
+- Link directo al carrito real en West Import.
 
 ## Las tiendas y cómo se leen
 
@@ -51,6 +56,25 @@ lo que es una deducción:
 Empretienda no publica stock en el listado, así que esos productos arrancan en `CONSULTAR` y
 se confirman abriendo la ficha. Shopify queda afuera de esa verificación a propósito: la ficha
 de West Import viene dando falsos negativos.
+
+## Búsquedas guardadas y productos seguidos
+
+Son dos cosas distintas, a propósito:
+
+- Una **búsqueda guardada** ("khamrah") sigue al mercado: todos los días se consultan las 13
+  tiendas y avisa si alguna quedó por debajo del precio objetivo.
+- Un **producto seguido** (un frasco concreto en una tienda concreta) sigue un precio: se
+  vuelve a consultar sólo en su propia tienda y se lo ubica por URL, lo que reusa los scrapers
+  ya escritos y evita trece consultas por producto.
+
+Las dos cosas las revisa el mismo disparador diario, `revisarFavoritosYAlertar`, a las 9 de la
+mañana. Desde la pantalla se puede forzar la revisión de los productos seguidos con "Actualizar
+ahora"; ese camino **no** consume la alerta, así que el mail de las 9 sale igual.
+
+De cada producto seguido se guarda el precio de entrada, el actual, el de la revisión anterior,
+y el mínimo y el máximo alcanzados. Ojo con qué significan esos dos últimos: salen de las
+mediciones, no de todos los precios que la tienda haya tenido. Con una medición por día, un
+precio que aparece y desaparece entre revisiones no queda registrado.
 
 ## Cómo instalarlo
 
