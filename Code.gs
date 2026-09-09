@@ -203,6 +203,14 @@ function consultaSinMarca_(query) {
   const resto = palabras.filter(function (w) { return !palabrasDeMarca[w]; });
 
   if (resto.length === 0 || resto.length === palabras.length) return null;
+
+  // Si al sacar la marca queda una sola palabra corta, el reintento hace más daño
+  // que bien: "bharara king" se convertía en "king" y traía Kingsman, King of
+  // Seduction y cualquier otro perfume que se llame parecido. El caso para el que
+  // existe el reintento es distinto — "lattafa khamrah" -> "khamrah" —, donde lo
+  // que queda es el nombre propio del perfume.
+  if (resto.length === 1 && resto[0].length < 6) return null;
+
   return resto.join(' ');
 }
 
@@ -232,10 +240,37 @@ function extraerMl_(name) {
 
 // Exige que el nombre del producto contenga TODAS las palabras de la búsqueda
 // (no alguna suelta), para que "armaf mandarin" no traiga cualquier Armaf.
+/**
+ * Parte un nombre en palabras comparables: sin acentos, sin puntuación, y
+ * separando la cifra de la unidad para que "100ml" y "100 ml" den lo mismo.
+ */
+// El rango de marcas de acento que deja normalize('NFD'), armado con fromCharCode
+// para no dejar caracteres invisibles en el archivo.
+const RE_ACENTOS_ = new RegExp('[' + String.fromCharCode(0x0300) + '-' + String.fromCharCode(0x036f) + ']', 'g');
+
+function palabrasDe_(texto) {
+  let s = String(texto == null ? '' : texto).toLowerCase();
+  if (s.normalize) s = s.normalize('NFD').replace(RE_ACENTOS_, '');
+  s = s.replace(/([a-z])(\d)/g, '$1 $2').replace(/(\d)([a-z])/g, '$1 $2');
+  return s.split(/[^a-z0-9]+/).filter(function (w) { return w.length > 0; });
+}
+
+/**
+ * Un producto es relevante si su nombre contiene TODAS las palabras buscadas,
+ * como palabras enteras.
+ *
+ * Antes esto usaba includes(), o sea comparaba cadenas sueltas: buscar "king"
+ * daba por bueno "Kingsman", "Viking" y cualquier nombre que tuviera esas cuatro
+ * letras adentro. Por eso llegaban perfumes que no tenían nada que ver.
+ */
 function esRelevante_(name, query) {
-  const nameLower = name.toLowerCase();
-  const palabras = query.toLowerCase().split(/\s+/).filter(function (w) { return w.length > 0; });
-  return palabras.every(function (palabra) { return nameLower.includes(palabra); });
+  const enElNombre = {};
+  palabrasDe_(name).forEach(function (w) { enElNombre[w] = true; });
+
+  const pedidas = palabrasDe_(query);
+  if (pedidas.length === 0) return true;
+
+  return pedidas.every(function (w) { return enElNombre[w] === true; });
 }
 
 // La planilla abierta, reusada durante toda una ejecución. Cada obtenerSheet_()
@@ -454,9 +489,18 @@ function revisarFavoritos_() {
       return;
     }
 
+    const huellaVieja = obtenerUltimaAlerta_(fav.query);
     const huellaActual = JSON.stringify(cumplen.map(function (i) { return i.site + ':' + precioEfectivo_(i); }));
-    if (huellaActual !== obtenerUltimaAlerta_(fav.query)) {
-      alertas.push({ query: fav.query, objetivo: fav.precioObjetivo, items: cumplen });
+
+    if (huellaActual !== huellaVieja) {
+      // Se manda el listado completo de las tiendas que cumplen, no solo la que
+      // cambió, porque el mail sirve para decidir dónde comprar. Para que no
+      // parezca el mismo mail de ayer, va también lo que había la vez anterior
+      // y el correo marca qué se movió.
+      alertas.push({
+        query: fav.query, objetivo: fav.precioObjetivo,
+        items: cumplen, anterior: huellaAMapa_(huellaVieja),
+      });
       guardarUltimaAlerta_(fav.query, huellaActual);
     }
 
@@ -464,6 +508,21 @@ function revisarFavoritos_() {
   });
 
   return alertas;
+}
+
+/** Convierte la huella guardada ("Tienda:precio") en { tienda: precio }. */
+function huellaAMapa_(huella) {
+  const mapa = {};
+  if (!huella) return mapa;
+  try {
+    JSON.parse(huella).forEach(function (par) {
+      const corte = String(par).lastIndexOf(':');
+      if (corte > 0) mapa[String(par).substring(0, corte)] = Number(String(par).substring(corte + 1));
+    });
+  } catch (err) {
+    // Huella vieja o rota: se trata como si no hubiera habido aviso anterior.
+  }
+  return mapa;
 }
 
 function mejorOferta_(items) {
@@ -602,16 +661,34 @@ function enviarEmailAlertas_(alertas) {
 
   if (alertas.busquedas.length) {
     const bloques = alertas.busquedas.map(function (a) {
+      const antes = a.anterior || {};
+
       const items = a.items.map(function (item, i) {
-        return '  • ' + item.site + ': ' + pesos_(precioEfectivo_(item)) +
+        const precio = precioEfectivo_(item);
+        const previo = antes[item.site];
+
+        // Se marca qué cambió desde el último aviso. Sin esto, el correo repetía
+        // la lista entera y no se entendía por qué había llegado de nuevo.
+        let nota = '';
+        if (previo === undefined) nota = '  [NUEVO]';
+        else if (previo !== precio) nota = '  [antes ' + pesos_(previo) + ']';
+
+        return '  • ' + item.site + ': ' + pesos_(precio) +
                (item.priceTransferencia != null ? ' (con transferencia)' : '') +
-               (i === 0 ? '   ← el más barato' : '') + NL + '    ' + item.url;
+               (i === 0 ? '   ← el más barato' : '') + nota +
+               (item.marcaOmitida ? NL + '    OJO: coincidencia sin la marca, revisá que sea el que buscabas' : '') +
+               NL + '    ' + item.url;
       }).join(NL + NL);
-      return '🎯 "' + a.query + '" (objetivo: ' + pesos_(a.objetivo) + ')' + NL + NL + items;
+
+      const cabecera = '🎯 "' + a.query + '" — objetivo ' + pesos_(a.objetivo) + NL +
+                       '   ' + a.items.length + (a.items.length === 1 ? ' tienda cumple' : ' tiendas cumplen');
+
+      return cabecera + NL + NL + items;
     }).join(SEPARADOR);
 
     partes.push('BÚSQUEDAS GUARDADAS' + NL + NL +
-                'Estas tiendas están por debajo de tu precio objetivo:' + NL + NL + bloques);
+                'Va la lista completa de cada búsqueda. Lo que cambió desde el aviso anterior' + NL +
+                'está marcado con [NUEVO] o [antes $X]; el resto ya lo sabías.' + NL + NL + bloques);
   }
 
   if (alertas.productos.length) {
@@ -628,12 +705,23 @@ function enviarEmailAlertas_(alertas) {
     partes.push('PRODUCTOS QUE SEGUÍS' + NL + NL + bloques);
   }
 
-  const cuantos = alertas.busquedas.length + alertas.productos.length;
   MailApp.sendEmail({
     to: emailAlertas_(),
-    subject: '🧴 ' + cuantos + (cuantos === 1 ? ' novedad' : ' novedades') + ' en tu lista de perfumes',
+    subject: '🧴 ' + asuntoAlertas_(alertas),
     body: partes.join(SEPARADOR_2) + NL,
   });
+}
+
+/* "3 búsquedas con ofertas" decía antes "3 novedades", y no se entendía si eran
+   tres perfumes, tres tiendas o tres búsquedas. Son búsquedas y productos. */
+function asuntoAlertas_(alertas) {
+  const partes = [];
+  const b = alertas.busquedas.length;
+  const p = alertas.productos.length;
+
+  if (b) partes.push(b + (b === 1 ? ' búsqueda con ofertas' : ' búsquedas con ofertas'));
+  if (p) partes.push(p + (p === 1 ? ' producto que bajó' : ' productos que bajaron'));
+  return partes.join(' y ');
 }
 
 function pesos_(n) {
@@ -1128,12 +1216,69 @@ function scrapeEmpretienda_(site, query) {
   return items;
 }
 
+/* =========================================================
+ * STOCK DE PEDIX
+ *
+ * Pedix dejó de traer `stockQty` en el catálogo: hoy los 997 productos de
+ * Idalium vienen todos con `active:true` y sin ninguna marca de stock, así que
+ * todo figuraba como CONSULTAR aunque la tienda dijera "sin stock" al abrirlo.
+ *
+ * El stock lo pide el navegador aparte, a un endpoint público que devuelve la
+ * tienda entera de una sola vez:
+ *
+ *     https://api.pedix.app/v1/establishments/<establishmentId>/stock
+ *     -> { productStock: [ { productId, stockQty }, ... ] }
+ *
+ * El establishmentId sale de las URLs de las imágenes del propio catálogo.
+ * ========================================================= */
+
+// Memo por ejecución: buscarTodos_ puede llamar dos veces al mismo sitio
+// (la segunda es el reintento sin marca) y no hace falta pedirlo de nuevo.
+const _stockPedixMemo = {};
+
+function establishmentIdPedix_(html) {
+  const match = html.match(/cdn\.pedix\.app\/([A-Za-z0-9_-]{15,30})\//);
+  return match ? match[1] : null;
+}
+
+/**
+ * Devuelve { productId: stockQty } para toda la tienda, o null si no se pudo.
+ * Null significa "no se sabe", que es distinto de "no hay": los productos
+ * quedan en CONSULTAR y no se los da por agotados.
+ */
+function stockPedix_(establishmentId) {
+  if (!establishmentId) return null;
+  if (_stockPedixMemo[establishmentId] !== undefined) return _stockPedixMemo[establishmentId];
+
+  let mapa = null;
+  try {
+    const url = 'https://api.pedix.app/v1/establishments/' + establishmentId + '/stock';
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+
+    if (res.getResponseCode() === 200) {
+      const lista = (JSON.parse(res.getContentText()) || {}).productStock || [];
+      mapa = {};
+      lista.forEach(function (fila) {
+        if (fila && fila.productId != null && fila.stockQty != null) {
+          mapa[fila.productId] = Number(fila.stockQty);
+        }
+      });
+    }
+  } catch (err) {
+    mapa = null;   // la API no respondió: mejor no saber que inventar
+  }
+
+  _stockPedixMemo[establishmentId] = mapa;
+  return mapa;
+}
+
 function scrapePedix_(site, query) {
   const res = UrlFetchApp.fetch(site.baseUrl, { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode());
   const html = res.getContentText();
 
   const categoriasDecant = extraerCategoriasDecantPedix_(html);
+  const stockPorProducto = stockPedix_(establishmentIdPedix_(html));
   const blocks = html.split('{"id":"').slice(1);
   const items = [];
 
@@ -1156,10 +1301,19 @@ function scrapePedix_(site, query) {
     const stockMatch = block.match(/"stockQty":(\d+)/);
     const activeMatch = block.match(/"active":(true|false)/);
 
-    const stockQty = stockMatch ? Number(stockMatch[1]) : null;
+    // Primero el dato de la API de stock, que es el que usa la tienda hoy.
+    // El stockQty embebido queda como respaldo por si alguna tienda Pedix
+    // todavía lo trae en el catálogo.
+    let stockQty = null;
+    if (stockPorProducto && productId && stockPorProducto[productId] !== undefined) {
+      stockQty = stockPorProducto[productId];
+    } else if (stockMatch) {
+      stockQty = Number(stockMatch[1]);
+    }
+
     const active = activeMatch ? activeMatch[1] === 'true' : true;
-    // Si tenemos el dato real de stockQty, confiamos en él.
-    // Si no lo tenemos, no sabemos de verdad (el sitio solo lo revela al abrir la ficha), así que usamos null.
+    // Con el dato real, confiamos en él. Sin dato no sabemos de verdad, así que
+    // va null (CONSULTAR) y no se lo da por disponible ni por agotado.
     const inStock = stockQty != null ? (stockQty > 0 && active) : null;
 
     const url = (productId && categoryMatch)

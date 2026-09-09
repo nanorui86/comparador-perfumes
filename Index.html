@@ -507,10 +507,15 @@
   .delta.sube { color: var(--danger); }
 
   /* ---------- El botón de prioridad de cada producto seguido ---------- */
-  .mini-btn.prio { font-size: 13px; line-height: 1; min-width: 26px; }
-  .mini-btn.prio.p1 { color: var(--warn);  border-color: var(--warn); }
-  .mini-btn.prio.p2 { color: var(--muted); }
-  .mini-btn.prio.p3 { color: var(--faint); }
+  .mini-btn.prio {
+    font-size: 10px; font-weight: 800; letter-spacing: .04em;
+    line-height: 1; min-width: 52px; padding: 5px 7px;
+  }
+  .mini-btn.prio.p1 { color: var(--warn);   border-color: var(--warn); }
+  .mini-btn.prio.p2 { color: var(--muted);  border-color: var(--border); }
+  .mini-btn.prio.p3 { color: var(--faint);  border-color: var(--border-soft); }
+  /* Mientras estás eligiendo, la fila no se mueve: el borde lo hace evidente */
+  .mini-btn.prio.eligiendo { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
   .to-top {
     position: fixed; right: 18px; bottom: 22px; z-index: 40;
@@ -577,7 +582,8 @@
     </div>
     <div class="help-item">
       <h4>✓ Stock</h4>
-      <p>No todas las tiendas dicen lo mismo. Algunas publican el stock en su propio catálogo y ahí el dato es firme. Otras solo lo dejan ver en un cartel del listado, y una (Empretienda) directamente no lo dice: ahí antes figuraba "EN STOCK" siempre, aunque no hubiera. Ahora esos casos se confirman abriendo la ficha real del producto, unos segundos después de la búsqueda; cuando el cartel queda con un ✓, ese stock está verificado en la tienda. "CONSULTAR" quiere decir que no se pudo saber, no que no haya. Pasá el mouse por el cartel y te dice de dónde salió el dato.</p>
+      <p>No todas las tiendas dicen lo mismo. Algunas publican el stock en su propio catálogo y ahí el dato es firme. Otras solo lo dejan ver en un cartel del listado, y una (Empretienda) directamente no lo dice: ahí antes figuraba "EN STOCK" siempre, aunque no hubiera. Esos casos se confirman abriendo la ficha real del producto, unos segundos después de la búsqueda; cuando el cartel queda con un ✓, ese stock está verificado en la tienda. "CONSULTAR" quiere decir que no se pudo saber, no que no haya. Pasá el mouse por el cartel y te dice de dónde salió el dato.</p>
+      <p>Las tiendas de Pedix (Idalium, Huelepectacular) son un caso aparte: dejaron de publicar el stock en el catálogo y pasaron a pedirlo por separado, así que todo figuraba como CONSULTAR aunque la tienda dijera "sin stock" al abrir el producto. Ahora se consulta esa misma lista, de una sola vez para toda la tienda.</p>
     </div>
     <div class="help-item">
       <h4>💧 Precio por ml</h4>
@@ -598,7 +604,7 @@
     </div>
     <div class="help-item">
       <h4>★ Prioridad</h4>
-      <p>Cada producto seguido tiene una prioridad: tocá el ★ para rotar entre Alta, Normal y Baja. Los de prioridad Alta aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en Alta, la barra no aparece.</p>
+      <p>Cada producto seguido tiene una prioridad: tocá el botón para rotar entre ALTA, MEDIA y BAJA. La lista no se reacomoda mientras elegís — espera un par de segundos a que dejes de tocar, así el que pasa por BAJA no se te escapa al fondo cuando ibas a ALTA. Los de prioridad ALTA aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en ALTA, la barra no aparece.</p>
     </div>
   </div>
 
@@ -1284,10 +1290,16 @@ function borrarFavorito(i) {
    prioridad. La revisión diaria del backend los vuelve a mirar y avisa. */
 
 const PRIORIDADES = [
-  { valor: 1, icono: '★', nombre: 'Alta' },
-  { valor: 2, icono: '●', nombre: 'Normal' },
-  { valor: 3, icono: '○', nombre: 'Baja' },
+  { valor: 1, nombre: 'ALTA' },
+  { valor: 2, nombre: 'MEDIA' },
+  { valor: 3, nombre: 'BAJA' },
 ];
+
+// Cuánto se espera, después del último toque, antes de reordenar la lista.
+// Sin esta pausa el producto se iba al fondo apenas pasaba por BAJA, aunque
+// estuvieras yendo a ALTA y te faltara un toque.
+const ESPERA_REORDENAR = 2500;
+let temporizadorPrioridad = null;
 
 function infoPrioridad(p) {
   return PRIORIDADES.filter(function (x) { return x.valor === Number(p); })[0] || PRIORIDADES[1];
@@ -1412,8 +1424,9 @@ function pintarSeguimiento() {
                barraRango(s) +
              '</div>' +
              '<div class="list-actions">' +
-               '<button class="mini-btn prio p' + pr.valor + '" title="Prioridad ' + pr.nombre +
-                 ' — tocá para cambiarla" onclick="rotarPrioridad(' + i + ')">' + pr.icono + '</button>' +
+               '<button class="mini-btn prio p' + pr.valor + (s.moviendose ? ' eligiendo' : '') +
+                 '" title="Prioridad ' + pr.nombre + ' — tocá para cambiarla" ' +
+                 'onclick="rotarPrioridad(' + i + ')">' + pr.nombre + '</button>' +
                '<button class="mini-btn" title="Precio objetivo" onclick="editarObjetivo(' + i + ')">🎯</button>' +
                '<a class="mini-btn" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">Ver ↗</a>' +
                '<button class="mini-btn danger" onclick="dejarDeSeguir(' + i + ')">✕</button>' +
@@ -1451,10 +1464,19 @@ function rotarPrioridad(i) {
   // tarda uno o dos segundos, y esperarlo para recién ahí redibujar hacía que
   // cada toque pareciera que la página se colgaba.
   s.prioridad = Number(s.prioridad) >= 3 ? 1 : Number(s.prioridad) + 1;
-  ordenarSeguimiento();
+  s.moviendose = true;          // se queda en su lugar mientras elegís
   pintarSeguimiento();
 
-  guardarCambioSeguimiento(s.id, { prioridad: s.prioridad });
+  // El reordenado y el guardado esperan a que dejes de tocar. Si seguís rotando,
+  // el reloj se reinicia y recién al final se acomoda la lista y se guarda una
+  // sola vez, en vez de tres.
+  clearTimeout(temporizadorPrioridad);
+  temporizadorPrioridad = setTimeout(function () {
+    seguimiento.forEach(function (x) { delete x.moviendose; });
+    ordenarSeguimiento();
+    pintarSeguimiento();
+    guardarCambioSeguimiento(s.id, { prioridad: s.prioridad });
+  }, ESPERA_REORDENAR);
 }
 
 function editarObjetivo(i) {

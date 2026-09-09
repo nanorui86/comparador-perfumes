@@ -36,7 +36,7 @@ Cada tienda usa una plataforma de e-commerce distinta, y cada plataforma se lee 
 | Tiendanube | Esencias Oasis, Tom's Parfum Club, Ambrosía, Milrah | HTML de la página de búsqueda |
 | Pency | Vaphouse | JSON embebido en el HTML |
 | Empretienda | Un Koala Perfumado, Imperium Fragans | HTML de la página de búsqueda |
-| Pedix | Huelepectacular, Idalium Parfums | JSON embebido en el HTML |
+| Pedix | Huelepectacular, Idalium Parfums | JSON embebido en el HTML, + una API aparte para el stock |
 | TiendaNegocio | Bancoperfumes, Klutch Shop | JSON embebido y escapado en el HTML |
 
 Las que se leen del HTML dependen del tema de la tienda y **pueden romperse cuando la tienda
@@ -56,6 +56,33 @@ lo que es una deducción:
 Empretienda no publica stock en el listado, así que esos productos arrancan en `CONSULTAR` y
 se confirman abriendo la ficha. Shopify queda afuera de esa verificación a propósito: la ficha
 de West Import viene dando falsos negativos.
+
+**Pedix es un caso aparte.** Dejó de traer `stockQty` en el catálogo —los 997 productos de
+Idalium vienen con `active:true` y ninguna marca de stock—, así que la tienda entera figuraba
+como `CONSULTAR` aunque al abrir un producto dijera "sin stock". El stock se pide ahora a un
+endpoint que devuelve la tienda completa de una sola vez:
+
+    https://api.pedix.app/v1/establishments/<establishmentId>/stock
+    -> { productStock: [ { productId, stockQty }, ... ] }
+
+El `establishmentId` sale de las URLs de las imágenes del propio catálogo, así que no hay nada
+que configurar por tienda. **No es una API documentada**, es la que usa la web de Pedix: si la
+cambian, esas dos tiendas vuelven a `CONSULTAR` —no a mentir—, y el `stockQty` embebido sigue
+como respaldo por si alguna tienda Pedix todavía lo trae.
+
+## Cómo se decide si un resultado corresponde a lo buscado
+
+`esRelevante_` exige que el nombre del producto contenga **todas** las palabras buscadas, como
+palabras enteras. La comparación normaliza acentos y separa la cifra de la unidad, así que
+`100ml` y `100 ml` son lo mismo.
+
+Que sean palabras enteras importa: cuando la comparación era por subcadena, buscar `king` daba
+por bueno `Kingsman` y `Viking`.
+
+Cuando una tienda no devuelve nada, la búsqueda se reintenta una vez sin las palabras que son
+marca, porque hay tiendas que publican "Khamrah" y no "Lattafa Khamrah". Ese reintento **no** se
+hace si al sacar la marca queda una sola palabra corta: `bharara king` se convertía en `king` y
+traía medio catálogo.
 
 ## Búsquedas guardadas y productos seguidos
 
