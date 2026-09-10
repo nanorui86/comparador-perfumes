@@ -123,6 +123,27 @@ Algunas reglas que no se deducen a simple vista:
 - **Si la tienda no muestra precio cuando está agotado**, igual se registra el stock y se
   conserva el último precio conocido.
 
+## El Historial
+
+La revisión de las 9 escribe una fila por cosa seguida por día en la pestaña `Historial`:
+fecha, tipo (`búsqueda` o `producto`), qué se sigue, tienda, precio y stock. Es la materia
+prima de un gráfico de evolución de precios; hoy nada la lee. "Actualizar ahora" no escribe
+ahí: actualiza Siguiendo, pero la medición oficial del día es la de las 9.
+
+Para que no crezca sin fin, el detalle diario se guarda solo para el mes en curso y los tres
+anteriores. Los meses más viejos se resumen solos en `Historial mensual` —mínimo, máximo,
+promedio, días medidos y días con stock, con la tienda y la URL del mínimo— y su detalle se
+borra. Se resume por meses enteros, así cada mes se resume una sola vez, y el proceso se puede
+repetir sin duplicar nada: primero escribe el resumen y después borra el detalle.
+
+Los días se cuentan como días, no como filas: si la revisión corrió dos veces el mismo día,
+ese día cuenta una vez, con su mejor precio.
+
+El Historial anterior al 10/09/2026 se apartó entero en `Historial (viejo)`. Tenía otro formato
+y datos que no sirven para un gráfico: hasta el 08/09 guardaba todos los resultados de todas
+las tiendas, y hasta el 09/09 parte eran perfumes equivocados por el bug de relevancia. Se
+puede borrar a mano cuando se quiera.
+
 ## Cómo instalarlo
 
 1. Crear un proyecto en [script.google.com](https://script.google.com).

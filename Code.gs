@@ -306,8 +306,12 @@ function obtenerSheet_() {
     favSheet.appendRow(['Búsqueda', 'Precio objetivo', 'Fecha agregado', 'Última alerta enviada']);
   }
   if (!ss.getSheetByName('Historial')) {
-    const histSheet = ss.insertSheet('Historial');
-    histSheet.appendRow(['Fecha', 'Búsqueda', 'Sitio', 'Nombre', 'Precio', 'En stock', 'URL']);
+    ss.insertSheet('Historial').appendRow(COLUMNAS_HISTORIAL);
+  } else {
+    archivarHistorialViejo_(ss);
+  }
+  if (!ss.getSheetByName('Historial mensual')) {
+    ss.insertSheet('Historial mensual').appendRow(COLUMNAS_MENSUAL);
   }
   if (!ss.getSheetByName('Seguimiento')) {
     const segSheet = ss.insertSheet('Seguimiento');
@@ -440,6 +444,194 @@ function eliminarFavorito(query) {
   return listarFavoritos();
 }
 
+/* =========================================================
+ * HISTORIAL
+ *
+ * Una fila por cosa seguida por día, escrita por la revisión de las 9. Es la
+ * materia prima de un gráfico de evolución de precios; hoy nada lo lee.
+ *
+ * Para que no crezca sin fin, el detalle diario se guarda solo para el mes en
+ * curso y los MESES_DE_DETALLE anteriores. Los meses más viejos se resumen en
+ * "Historial mensual" (una fila por cosa por mes) y su detalle se borra. Se
+ * resume por meses enteros, así cada mes se resume una sola vez.
+ * ========================================================= */
+
+const COLUMNAS_HISTORIAL = ['Fecha', 'Tipo', 'Qué se sigue', 'Tienda', 'Nombre en la tienda',
+                            'Precio', 'Stock', 'URL'];
+
+const COLUMNAS_MENSUAL = ['Mes', 'Tipo', 'Qué se sigue', 'Tienda del mínimo', 'Precio mínimo',
+                          'Precio máximo', 'Precio promedio', 'Días medidos', 'Días con stock',
+                          'URL del mínimo'];
+
+const MESES_DE_DETALLE = 3;
+
+function stockTexto_(inStock) {
+  return inStock === true ? 'SI' : (inStock === false ? 'NO' : '');
+}
+
+/**
+ * Hasta el 10/09/2026 el Historial tenía otro formato y datos que no sirven para
+ * un gráfico: hasta el 08/09 guardaba TODOS los resultados de TODAS las tiendas,
+ * y hasta el 09/09 parte eran perfumes equivocados (el bug de relevancia anotaba
+ * Kingsman bajo "bharara king"). Esa pestaña se aparta entera con otro nombre, no
+ * se borra, y el Historial arranca limpio. El formato viejo se reconoce porque
+ * no tiene la columna "Tipo".
+ */
+function archivarHistorialViejo_(ss) {
+  const hist = ss.getSheetByName('Historial');
+  if (hist.getLastRow() === 0) {
+    hist.appendRow(COLUMNAS_HISTORIAL);
+    return;
+  }
+  if (hist.getRange(1, 2).getValue() === 'Tipo') return;   // ya es el formato nuevo
+
+  let nombre = 'Historial (viejo)';
+  for (let n = 2; ss.getSheetByName(nombre); n++) nombre = 'Historial (viejo ' + n + ')';
+  hist.setName(nombre);
+  ss.insertSheet('Historial').appendRow(COLUMNAS_HISTORIAL);
+}
+
+/** Agrega varias filas de una sola vez: appendRow de a una es una llamada por fila. */
+function anotarHistorial_(filas) {
+  if (!filas.length) return;
+  const sheet = obtenerSheet_().getSheetByName('Historial');
+  const desde = sheet.getLastRow() + 1;
+  const faltan = desde + filas.length - 1 - sheet.getMaxRows();
+  if (faltan > 0) sheet.insertRowsAfter(sheet.getMaxRows(), faltan);
+  sheet.getRange(desde, 1, filas.length, COLUMNAS_HISTORIAL.length).setValues(filas);
+}
+
+/** Primer día del mes que marca el límite: lo anterior se resume. */
+function corteDelDetalle_(hoy) {
+  return new Date(hoy.getFullYear(), hoy.getMonth() - MESES_DE_DETALLE, 1);
+}
+
+/**
+ * Resume en "Historial mensual" los meses que ya quedaron fuera del detalle y
+ * borra su detalle. Corre todos los días al final de la revisión, pero trabaja
+ * de verdad una vez por mes: el resto de los días solo lee la columna de fechas
+ * y ve que no hay nada viejo.
+ *
+ * Es seguro repetirlo: primero escribe el resumen y después borra el detalle, y
+ * si un mes ya tenía resumen lo reemplaza en vez de sumarle otro. Si algo se
+ * corta entre los dos pasos, la próxima vez el detalle sigue completo y el
+ * resumen se vuelve a calcular igual.
+ */
+function mantenerHistorial_(hoy) {
+  const ss = obtenerSheet_();
+  const hist = ss.getSheetByName('Historial');
+  const ultima = hist.getLastRow();
+  if (ultima < 2) return { resumidas: 0 };
+
+  const corte = corteDelDetalle_(hoy || new Date());
+
+  // Camino rápido: solo la columna de fechas.
+  const fechas = hist.getRange(2, 1, ultima - 1, 1).getValues();
+  const hayViejas = fechas.some(function (f) { return f[0] instanceof Date && f[0] < corte; });
+  if (!hayViejas) return { resumidas: 0 };
+
+  const datos = hist.getRange(2, 1, ultima - 1, COLUMNAS_HISTORIAL.length).getValues();
+  const viejas = [];
+  const quedan = [];
+  datos.forEach(function (f) {
+    (f[0] instanceof Date && f[0] < corte ? viejas : quedan).push(f);
+  });
+
+  // 1) El resumen de los meses viejos, reemplazando lo que hubiera de esos meses.
+  const resumen = resumirPorMes_(viejas);
+  const mesesNuevos = {};
+  resumen.forEach(function (r) { mesesNuevos[r[0]] = true; });
+
+  const mensual = ss.getSheetByName('Historial mensual');
+  const ultimaMensual = mensual.getLastRow();
+  const anteriores = ultimaMensual > 1
+    ? mensual.getRange(2, 1, ultimaMensual - 1, COLUMNAS_MENSUAL.length).getValues()
+        .filter(function (f) { return !mesesNuevos[String(f[0])]; })
+    : [];
+  const todo = anteriores.concat(resumen).sort(function (a, b) {
+    return String(a[0]).localeCompare(String(b[0])) || String(a[2]).localeCompare(String(b[2]));
+  });
+
+  if (ultimaMensual > 1) mensual.getRange(2, 1, ultimaMensual - 1, COLUMNAS_MENSUAL.length).clearContent();
+  if (todo.length) {
+    const faltan = todo.length + 1 - mensual.getMaxRows();
+    if (faltan > 0) mensual.insertRowsAfter(mensual.getMaxRows(), faltan);
+    mensual.getRange(2, 1, todo.length, COLUMNAS_MENSUAL.length).setValues(todo);
+  }
+
+  // 2) Recién ahora, el detalle: se reescribe con lo que queda.
+  hist.getRange(2, 1, datos.length, COLUMNAS_HISTORIAL.length).clearContent();
+  if (quedan.length) hist.getRange(2, 1, quedan.length, COLUMNAS_HISTORIAL.length).setValues(quedan);
+
+  // Y se achica la grilla: las celdas vacías también cuentan para el límite de
+  // la planilla. Se deja una fila libre porque Sheets no permite borrarlas todas.
+  const sobran = hist.getMaxRows() - (quedan.length + 2);
+  if (sobran > 0) hist.deleteRows(quedan.length + 3, sobran);
+
+  return { resumidas: viejas.length, meses: Object.keys(mesesNuevos).sort() };
+}
+
+/**
+ * Una fila por mes y por cosa seguida. Se cuenta por días y no por filas: si la
+ * revisión corrió dos veces el mismo día, ese día cuenta una vez, con su mejor
+ * precio. La tienda y la URL son las del precio mínimo del mes, que para una
+ * búsqueda guardada dice dónde estuvo la mejor oferta.
+ */
+function resumirPorMes_(filas) {
+  const zona = Session.getScriptTimeZone();
+  const grupos = {};
+  const orden = [];
+
+  filas.forEach(function (f) {
+    const fecha = f[0];
+    const tipo = String(f[1]);
+    const que = String(f[2]);
+    const mes = Utilities.formatDate(fecha, zona, 'yyyy-MM');
+    const dia = Utilities.formatDate(fecha, zona, 'yyyy-MM-dd');
+    // Un producto se identifica por su URL; una búsqueda, por lo que se busca.
+    const clave = mes + '|' + tipo + '|' + (tipo === 'producto' ? String(f[7]) : que.toLowerCase());
+
+    if (!grupos[clave]) {
+      grupos[clave] = { mes: mes, tipo: tipo, que: que, dias: {} };
+      orden.push(clave);
+    }
+    const g = grupos[clave];
+    const precio = f[5] === '' || f[5] == null ? null : Number(f[5]);
+    const d = g.dias[dia] || (g.dias[dia] = { precio: null, tienda: '', url: '', conStock: false });
+
+    if (precio != null && (d.precio == null || precio < d.precio)) {
+      d.precio = precio;
+      d.tienda = f[3];
+      d.url = f[7];
+    }
+    if (f[6] === 'SI' || f[6] === true) d.conStock = true;
+  });
+
+  return orden.map(function (clave) {
+    const g = grupos[clave];
+    const dias = Object.keys(g.dias).map(function (k) { return g.dias[k]; });
+    const conPrecio = dias.filter(function (d) { return d.precio != null; });
+
+    let min = null;
+    conPrecio.forEach(function (d) { if (!min || d.precio < min.precio) min = d; });
+    const max = conPrecio.reduce(function (m, d) { return Math.max(m, d.precio); }, -Infinity);
+    const promedio = conPrecio.length
+      ? Math.round(conPrecio.reduce(function (s, d) { return s + d.precio; }, 0) / conPrecio.length)
+      : '';
+
+    return [
+      g.mes, g.tipo, g.que,
+      min ? min.tienda : '',
+      min ? min.precio : '',
+      conPrecio.length ? max : '',
+      promedio,
+      dias.length,
+      dias.filter(function (d) { return d.conStock; }).length,
+      min ? min.url : '',
+    ];
+  });
+}
+
 /**
  * La revisión diaria. El disparador ya creado apunta a este nombre, así que no
  * se renombra aunque ahora haga dos cosas: las búsquedas guardadas y los
@@ -456,26 +648,32 @@ function revisarFavoritosYAlertar() {
   if (alertas.busquedas.length || alertas.productos.length || alertas.stock.length) {
     enviarEmailAlertas_(alertas);
   }
+
+  // Va al final y aislado: si el mantenimiento falla, los avisos ya salieron.
+  try {
+    mantenerHistorial_(new Date());
+  } catch (err) {
+    console.error('Mantenimiento del historial: ' + err.message);
+  }
 }
 
 function revisarFavoritos_() {
   const favoritos = listarFavoritos();
   if (favoritos.length === 0) return [];
 
-  const histSheet = obtenerSheet_().getSheetByName('Historial');
   const ahora = new Date();
   const alertas = [];
+  const paraHistorial = [];
 
   favoritos.forEach(function (fav) {
     const resultado = buscarTodos_(fav.query);
 
-    // Se guarda una sola fila por día y por búsqueda: la mejor oferta del día.
-    // Antes se guardaban TODOS los resultados de todas las tiendas, y con unos
-    // pocos favoritos eran cientos de miles de filas por año que nadie leía.
+    // Una sola fila por día y por búsqueda: la mejor oferta del día. Antes se
+    // guardaban TODOS los resultados de todas las tiendas.
     const mejor = mejorOferta_(resultado.results);
     if (mejor) {
-      histSheet.appendRow([ahora, fav.query, mejor.site, mejor.name,
-                           precioEfectivo_(mejor), mejor.inStock, mejor.url]);
+      paraHistorial.push([ahora, 'búsqueda', fav.query, mejor.site, mejor.name,
+                          precioEfectivo_(mejor), stockTexto_(mejor.inStock), mejor.url]);
     }
 
     if (!fav.precioObjetivo) return;
@@ -515,6 +713,7 @@ function revisarFavoritos_() {
     Utilities.sleep(1000);
   });
 
+  anotarHistorial_(paraHistorial);
   return alertas;
 }
 
@@ -567,15 +766,15 @@ function actualizarPreciosSeguimiento() {
   return listarSeguimiento();
 }
 
-function refrescarPrecios_(conAlertas) {
+function refrescarPrecios_(esRevisionDiaria) {
   const salida = { precios: [], stock: [] };
   const seguidos = listarSeguimiento();
   if (seguidos.length === 0) return salida;
 
   const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const filas = sheet.getDataRange().getValues();
-  const histSheet = obtenerSheet_().getSheetByName('Historial');
   const ahora = new Date();
+  const paraHistorial = [];
   const cache = {};   // una misma búsqueda sirve para varios productos de la misma tienda
 
   // 1) Ubicar cada producto en su propia tienda.
@@ -654,10 +853,13 @@ function refrescarPrecios_(conAlertas) {
       sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([nueva]);
       filas[fila] = nueva;   // para que las marcas de alerta de más abajo no pisen esto
     }
-    histSheet.appendRow([ahora, seg.name, seg.site, match.name,
-                         precioHoy == null ? '' : precioHoy, match.inStock, seg.url]);
+    if (!esRevisionDiaria) return;
 
-    if (!conAlertas) return;
+    // El historial lo escribe solo la revisión de las 9, que es la medición
+    // oficial del día. "Actualizar ahora" actualiza el precio, el mínimo y el
+    // máximo de Siguiendo, pero no suma filas: antes cada toque agregaba otra.
+    paraHistorial.push([ahora, 'producto', seg.name, seg.site, match.name,
+                        precioHoy == null ? '' : precioHoy, stockHoy, seg.url]);
 
     // Aviso de stock: es de un solo uso, como el "avisame cuando llegue" de las
     // tiendas. Se manda y se apaga. Se decide por el estado de hoy y no por el
@@ -698,6 +900,7 @@ function refrescarPrecios_(conAlertas) {
     }
   });
 
+  anotarHistorial_(paraHistorial);
   return salida;
 }
 
