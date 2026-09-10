@@ -328,7 +328,7 @@ function obtenerSheet_() {
 const COLUMNAS_SEGUIMIENTO = ['ID', 'Nombre', 'Sitio', 'URL', 'Precio inicial', 'Precio actual',
                               'Precio objetivo', 'Prioridad', 'Fecha agregado', 'Última revisión',
                               'Última alerta', 'Precio anterior', 'Precio mínimo', 'Precio máximo',
-                              'Stock', 'Sin stock desde', 'Avisar si vuelve'];
+                              'Stock', 'Sin stock desde', 'Avisar si vuelve', 'Orden'];
 
 /**
  * Las columnas se fueron agregando con el tiempo. Si la planilla es de antes, se
@@ -343,14 +343,42 @@ function asegurarColumnasSeguimiento_(sheet) {
   sheet.getRange(1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([COLUMNAS_SEGUIMIENTO]);
 
   const ultima = sheet.getLastRow();
-  if (ultima < 2 || anchoActual >= 14) return;   // mínimo y máximo ya estaban
+  if (ultima < 2) return;
 
-  const actuales = sheet.getRange(2, 6, ultima - 1, 1).getValues();
-  const nuevas = actuales.map(function (f) {
-    const precio = f[0] === '' ? '' : Number(f[0]);
-    return ['', precio, precio];   // anterior, mínimo, máximo
+  if (anchoActual < 14) {
+    const actuales = sheet.getRange(2, 6, ultima - 1, 1).getValues();
+    const nuevas = actuales.map(function (f) {
+      const precio = f[0] === '' ? '' : Number(f[0]);
+      return ['', precio, precio];   // anterior, mínimo, máximo
+    });
+    sheet.getRange(2, 12, nuevas.length, 3).setValues(nuevas);
+  }
+
+  if (anchoActual < 18) numerarOrdenInicial_(sheet, ultima);
+}
+
+/**
+ * El orden manual arranca igual al que se veía hasta que existió: por prioridad
+ * y, dentro de cada una, lo que más bajó de precio primero. Así el día que se
+ * agrega la columna nada cambia de lugar.
+ */
+function numerarOrdenInicial_(sheet, ultima) {
+  const filas = sheet.getRange(2, 1, ultima - 1, 8).getValues();
+  const indices = filas.map(function (f, i) { return i; }).sort(function (a, b) {
+    const pa = Number(filas[a][7]) || PRIORIDAD_NORMAL;
+    const pb = Number(filas[b][7]) || PRIORIDAD_NORMAL;
+    if (pa !== pb) return pa - pb;
+    return bajaDeFila_(filas[b]) - bajaDeFila_(filas[a]);
   });
-  sheet.getRange(2, 12, nuevas.length, 3).setValues(nuevas);
+  const orden = filas.map(function () { return ['']; });
+  indices.forEach(function (fila, posicion) { orden[fila] = [posicion]; });
+  sheet.getRange(2, 18, orden.length, 1).setValues(orden);
+}
+
+function bajaDeFila_(f) {
+  const inicial = Number(f[4]);
+  const actual = f[5] === '' ? null : Number(f[5]);
+  return inicial && actual != null ? (1 - actual / inicial) * 100 : 0;
 }
 
 /**
@@ -385,6 +413,7 @@ function migrarCarritoASeguimiento_(ss, segSheet) {
       precio,               // Precio mínimo
       precio,               // Precio máximo
       '', '', '',           // Stock, Sin stock desde, Avisar si vuelve
+      filas.length,         // Orden: el mismo en que estaban en el carrito
     ]);
   }
 
@@ -1111,6 +1140,7 @@ function filaASeguido_(fila) {
     stock:          fila[14] === 'SI' || fila[14] === 'NO' ? fila[14] : null,
     sinStockDesde:  fechaISO_(fila[15]),
     avisarStock:    fila[16] === 'SI',
+    orden:          fila[17] === '' || fila[17] == null ? null : Number(fila[17]),
   };
 }
 
@@ -1124,12 +1154,39 @@ function listarSeguimiento() {
     salida.push(filaASeguido_(data[i]));
   }
 
-  // Primero lo prioritario y, dentro de cada nivel, lo que más bajó de precio
+  // Primero la prioridad y, dentro de cada una, el orden que elegiste a mano.
+  // Antes el segundo criterio era "lo que más bajó", pero con eso los productos
+  // se reacomodaban solos cada mañana según cómo se movían los precios.
   salida.sort(function (a, b) {
     if (a.prioridad !== b.prioridad) return a.prioridad - b.prioridad;
-    return bajaPorcentual_(b) - bajaPorcentual_(a);
+    const oa = a.orden == null ? Infinity : a.orden;
+    const ob = b.orden == null ? Infinity : b.orden;
+    if (oa !== ob) return oa - ob;
+    return bajaPorcentual_(b) - bajaPorcentual_(a);   // solo para empates raros
   });
   return salida;
+}
+
+/**
+ * Guarda el orden de la lista tal como quedó en pantalla: `ids` en el orden en
+ * que se ven. Cada uno toma su posición en la lista entera, lo que conserva el
+ * orden dentro de cada prioridad. Una lectura y una escritura, sea cual sea el
+ * largo de la lista.
+ */
+function reordenarSeguimiento(ids) {
+  const sheet = obtenerSheet_().getSheetByName('Seguimiento');
+  const ultima = sheet.getLastRow();
+  if (ultima < 2 || !ids || !ids.length) return;
+
+  const posicion = {};
+  ids.forEach(function (id, k) { posicion[id] = k; });
+
+  const columnaIds = sheet.getRange(2, 1, ultima - 1, 1).getValues();
+  const columnaOrden = sheet.getRange(2, 18, ultima - 1, 1).getValues();
+  const nueva = columnaIds.map(function (f, i) {
+    return [posicion[f[0]] !== undefined ? posicion[f[0]] : columnaOrden[i][0]];
+  });
+  sheet.getRange(2, 18, nueva.length, 1).setValues(nueva);
 }
 
 /** Cuánto bajó desde que lo empezaste a seguir, en por ciento. 0 si no se puede saber. */
@@ -1147,11 +1204,13 @@ function agregarASeguimiento(item) {
   const data = sheet.getDataRange().getValues();
   const precio = precioEfectivo_(item);
 
+  let ultimoOrden = -1;
   for (let i = 1; i < data.length; i++) {
     if (data[i][3] === item.url) {
       if (precio != null) sheet.getRange(i + 1, 6).setValue(precio);
       return listarSeguimiento();
     }
+    if (data[i][17] !== '' && data[i][17] != null) ultimoOrden = Math.max(ultimoOrden, Number(data[i][17]));
   }
 
   sheet.appendRow([
@@ -1167,6 +1226,7 @@ function agregarASeguimiento(item) {
     item.inStock === true ? 'SI' : (item.inStock === false ? 'NO' : ''),
     item.inStock === false ? new Date() : '',   // sin stock desde
     '',                                         // avisar si vuelve: lo prendés vos
+    ultimoOrden + 1,                            // entra al final de su prioridad
   ]);
   return listarSeguimiento();
 }

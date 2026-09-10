@@ -397,6 +397,16 @@
     gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px;
   }
   .list-item:last-child { border-bottom: none; }
+
+  /* Las flechitas para ordenar a mano, en columna a la izquierda de cada fila */
+  .mover { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+  .mover-btn {
+    font: inherit; font-size: 9px; line-height: 1; width: 22px; height: 18px; padding: 0;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .mover-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .mover-btn:disabled { opacity: .25; cursor: default; }
   .list-info { min-width: 0; flex: 1; }
   .list-name { font-weight: 620; margin-bottom: 2px; }
   .list-sub { color: var(--muted); font-size: 11.5px; }
@@ -610,6 +620,7 @@
     </div>
     <div class="help-item">
       <h4>★ Prioridad</h4>
+      <p><strong>Ordenar a mano.</strong> Con las flechitas ▲▼ de la izquierda movés cada producto dentro de su prioridad, y ese orden se respeta también en la barra de abajo a la derecha. Las flechas no cruzan de un grupo a otro: para pasar un producto de MEDIA a ALTA se cambia la prioridad, y ahí entra al final del grupo nuevo.</p>
       <p>Cada producto seguido tiene una prioridad: tocá el botón para rotar entre ALTA, MEDIA y BAJA. La lista no se reacomoda mientras elegís — espera un par de segundos a que dejes de tocar, así el que pasa por BAJA no se te escapa al fondo cuando ibas a ALTA. Los de prioridad ALTA aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en ALTA, la barra no aparece.</p>
     </div>
   </div>
@@ -1419,11 +1430,72 @@ function renderSeguimiento(data) {
 
 /* El mismo orden que aplica el backend, para poder reordenar en el momento sin
    tener que volver a pedirle la lista. */
+/* El mismo orden que aplica el backend: primero la prioridad y, dentro de cada
+   una, el orden que elegiste a mano. Sirve para reordenar en el momento sin
+   tener que volver a pedirle la lista. */
 function ordenarSeguimiento() {
   seguimiento.sort(function (a, b) {
     if (Number(a.prioridad) !== Number(b.prioridad)) return Number(a.prioridad) - Number(b.prioridad);
+    const oa = a.orden == null ? Infinity : a.orden;
+    const ob = b.orden == null ? Infinity : b.orden;
+    if (oa !== ob) return oa - ob;
     return (variacion(b) || 0) - (variacion(a) || 0);
   });
+}
+
+/* Después de mover algo, cada producto toma su posición en la lista entera.
+   Eso conserva el orden dentro de cada prioridad y es lo que se guarda. */
+function renumerarSeguimiento() {
+  seguimiento.forEach(function (s, k) { s.orden = k; });
+}
+
+/* ¿Se puede mover el producto i un lugar hacia arriba (-1) o abajo (+1)?
+   Solo dentro de su prioridad: pasar de un grupo a otro es cambiar la prioridad. */
+function puedeMoverse(i, delta) {
+  const s = seguimiento[i];
+  const otro = seguimiento[i + delta];
+  return !!(s && otro && Number(otro.prioridad) === Number(s.prioridad));
+}
+
+function moverSeguido(i, delta) {
+  if (!puedeMoverse(i, delta)) return;
+  const s = seguimiento[i];
+  seguimiento[i] = seguimiento[i + delta];
+  seguimiento[i + delta] = s;
+  renumerarSeguimiento();
+  pintarSeguimiento();   // se ve ya; se guarda después
+  guardarOrdenDiferido();
+}
+
+// Si movés un producto varios lugares seguidos, se guarda una sola vez al final
+// en vez de una por toque, igual que con la prioridad.
+const ESPERA_GUARDAR_ORDEN = 1200;
+let temporizadorOrden = null;
+
+function guardarOrdenDiferido() {
+  clearTimeout(temporizadorOrden);
+  temporizadorOrden = setTimeout(function () {
+    const ids = seguimiento.map(function (s) { return s.id; });
+    google.script.run
+      .withFailureHandler(function () {
+        alert('No pude guardar el orden. Vuelvo a cargar la lista.');
+        cargarSeguimiento();
+      })
+      .reordenarSeguimiento(ids);
+  }, ESPERA_GUARDAR_ORDEN);
+}
+
+/* Las dos flechitas a la izquierda de cada fila. Se desactivan en el borde de
+   su prioridad: el primero de ALTA no sube, el último de ALTA no baja. */
+function flechasOrden(i) {
+  const sube = puedeMoverse(i, -1);
+  const baja = puedeMoverse(i, 1);
+  return '<div class="mover">' +
+           '<button class="mover-btn" title="Subir" ' + (sube ? '' : 'disabled ') +
+             'onclick="moverSeguido(' + i + ', -1)">▲</button>' +
+           '<button class="mover-btn" title="Bajar" ' + (baja ? '' : 'disabled ') +
+             'onclick="moverSeguido(' + i + ', 1)">▼</button>' +
+         '</div>';
 }
 
 function pintarSeguimiento() {
@@ -1462,6 +1534,7 @@ function pintarSeguimiento() {
       : '';
 
     return '<div class="list-item">' +
+             flechasOrden(i) +
              '<div class="list-info">' +
                '<div class="list-name">' + escapeHtml(s.name) + '</div>' +
                '<div class="list-sub">' + escapeHtml(s.site) + ' · ' + precioHtml + ' ' + varHtml + ' ' + objetivoHtml + '</div>' +
@@ -1509,6 +1582,7 @@ function rotarPrioridad(i) {
   // Se pinta primero y se guarda después: el viaje de ida y vuelta a Apps Script
   // tarda uno o dos segundos, y esperarlo para recién ahí redibujar hacía que
   // cada toque pareciera que la página se colgaba.
+  if (!s.moviendose) s.prioridadOriginal = Number(s.prioridad);
   s.prioridad = Number(s.prioridad) >= 3 ? 1 : Number(s.prioridad) + 1;
   s.moviendose = true;          // se queda en su lugar mientras elegís
   pintarSeguimiento();
@@ -1518,10 +1592,22 @@ function rotarPrioridad(i) {
   // sola vez, en vez de tres.
   clearTimeout(temporizadorPrioridad);
   temporizadorPrioridad = setTimeout(function () {
-    seguimiento.forEach(function (x) { delete x.moviendose; });
+    // Se guardan TODOS los que se tocaron, no solo el último: antes, si rotabas
+    // uno y enseguida otro, el reloj se reiniciaba y el primero no se guardaba.
+    const tocados = seguimiento.filter(function (x) { return x.moviendose; });
+    const cambiaron = tocados.filter(function (x) { return Number(x.prioridad) !== x.prioridadOriginal; });
+
+    tocados.forEach(function (x) { delete x.moviendose; delete x.prioridadOriginal; });
+    // El que cambió de prioridad entra al final de su grupo nuevo. Si diste la
+    // vuelta completa y volviste a la misma, se queda donde estaba.
+    cambiaron.forEach(function (x) { x.orden = Infinity; });
+
     ordenarSeguimiento();
+    renumerarSeguimiento();
     pintarSeguimiento();
-    guardarCambioSeguimiento(s.id, { prioridad: s.prioridad });
+
+    cambiaron.forEach(function (x) { guardarCambioSeguimiento(x.id, { prioridad: x.prioridad }); });
+    if (cambiaron.length) guardarOrdenDiferido();
   }, ESPERA_REORDENAR);
 }
 

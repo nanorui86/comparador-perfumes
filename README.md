@@ -23,7 +23,8 @@ No hay build, no hay dependencias, no hay servidor propio.
 - **Sigue productos puntuales**: guarda con qué precio entró cada uno, mide su mínimo y su
   máximo, y avisa cuando llega a tu objetivo (o baja un 5%, si no le pusiste objetivo).
 - **Avisa cuando vuelve el stock** de un producto seguido que estaba agotado.
-- Una **lista de prioridad** siempre visible con lo que estás por comprar.
+- Una **lista de prioridad** siempre visible con lo que estás por comprar, ordenable a mano
+  dentro de cada prioridad.
 - Link directo al carrito real en West Import.
 
 ## Las tiendas y cómo se leen
@@ -103,6 +104,17 @@ De cada producto seguido se guarda el precio de entrada, el actual, el de la rev
 y el mínimo y el máximo alcanzados. Ojo con qué significan esos dos últimos: salen de las
 mediciones, no de todos los precios que la tienda haya tenido. Con una medición por día, un
 precio que aparece y desaparece entre revisiones no queda registrado.
+
+### Prioridad y orden
+
+Cada producto seguido tiene prioridad ALTA, MEDIA o BAJA y, dentro de cada una, un orden que se
+elige a mano con las flechas. Las flechas no cruzan de una prioridad a otra: cambiar de grupo es
+cambiar la prioridad, y el producto entra al final del grupo nuevo. La barra flotante muestra los
+de ALTA en ese mismo orden.
+
+El orden manual reemplazó al que había antes dentro de cada prioridad, "lo que más bajó
+primero", porque con ese criterio la lista se reacomodaba sola cada mañana según los precios.
+Cuando se agregó la columna `Orden`, se numeró con el orden que se veía hasta ese momento.
 
 ### Avisar cuando vuelva el stock
 
