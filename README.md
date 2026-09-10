@@ -22,6 +22,7 @@ No hay build, no hay dependencias, no hay servidor propio.
 - Guarda **búsquedas favoritas** con precio objetivo y avisa por mail cuando alguna tienda baja.
 - **Sigue productos puntuales**: guarda con qué precio entró cada uno, mide su mínimo y su
   máximo, y avisa cuando llega a tu objetivo (o baja un 5%, si no le pusiste objetivo).
+- **Avisa cuando vuelve el stock** de un producto seguido que estaba agotado.
 - Una **lista de prioridad** siempre visible con lo que estás por comprar.
 - Link directo al carrito real en West Import.
 
@@ -102,6 +103,25 @@ De cada producto seguido se guarda el precio de entrada, el actual, el de la rev
 y el mínimo y el máximo alcanzados. Ojo con qué significan esos dos últimos: salen de las
 mediciones, no de todos los precios que la tienda haya tenido. Con una medición por día, un
 precio que aparece y desaparece entre revisiones no queda registrado.
+
+### Avisar cuando vuelva el stock
+
+Cada producto seguido guarda también si tiene stock y, si no tiene, desde qué día. Para los
+agotados hay un botón "Avisar si vuelve": cuando la revisión diaria lo encuentra con stock,
+manda un mail y el aviso se apaga solo, como el "avisame cuando llegue" de las tiendas.
+
+Algunas reglas que no se deducen a simple vista:
+
+- **Antes de avisar, el stock se confirma en la ficha** en las tiendas donde el listado no es
+  confiable (Tiendanube, Empretienda). Un mail de "volvió" no puede salir por un cartel mal leído.
+- **El aviso se decide por el estado de hoy, no por el cambio respecto a ayer.** Así "Actualizar
+  ahora" no se come el mail: si lo tocaste y ya viste que volvió, el de las 9 sale igual.
+- **"No se sabe" no toca nada.** Si un día la tienda no responde o la ficha no lo dice, no se
+  borra un "sin stock" anterior ni se dispara un aviso.
+- **Que un producto desaparezca de la búsqueda no lo da por agotado**: hay tiendas que esconden
+  lo agotado del buscador, y eso no alcanza para afirmarlo.
+- **Si la tienda no muestra precio cuando está agotado**, igual se registra el stock y se
+  conserva el último precio conocido.
 
 ## Cómo instalarlo
 

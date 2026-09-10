@@ -514,6 +514,11 @@
   .mini-btn.prio.p1 { color: var(--warn);   border-color: var(--warn); }
   .mini-btn.prio.p2 { color: var(--muted);  border-color: var(--border); }
   .mini-btn.prio.p3 { color: var(--faint);  border-color: var(--border-soft); }
+  /* El aviso de stock: apagado es un botón más; prendido se destaca */
+  .mini-btn.aviso { font-size: 11px; white-space: nowrap; }
+  .mini-btn.aviso.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  .dock-agotado { color: var(--danger); font-weight: 600; }
+
   /* Mientras estás eligiendo, la fila no se mueve: el borde lo hace evidente */
   .mini-btn.prio.eligiendo { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
@@ -600,6 +605,7 @@
     <div class="help-item">
       <h4>📉 Siguiendo</h4>
       <p>A diferencia de Favoritos (que guarda una búsqueda y sigue al mercado), esto sigue <em>un producto puntual</em> en una tienda puntual. Guarda con qué precio entró y todos los días a las 9 vuelve a mirarlo; también podés forzarlo con "Actualizar ahora". Si baja, te avisa por mail: podés ponerle un precio objetivo con 🎯, y si no le ponés ninguno avisa cuando baje un 5% del precio de entrada.</p>
+      <p><strong>🔔 Avisar si vuelve.</strong> Si un producto que seguís está agotado, aparece este botón. Prendelo y la próxima vez que la revisión diaria lo encuentre con stock te llega un mail. Es de un solo uso, como el "avisame cuando llegue" de las tiendas: avisa una vez y se apaga, para que no te llegue lo mismo todos los días. Antes de mandarlo, el stock se confirma abriendo la ficha del producto, así el aviso no sale por un cartel mal leído. Al lado de cada producto ves además si hay stock y, si no hay, desde qué día.</p>
       <p>De cada producto seguido ves cuatro cosas: <strong>el precio de hoy</strong> (el número grande, siempre el último medido), <strong>cuánto cambió desde que lo seguís</strong> (↓ verde si bajó, ↑ rojo si subió, comparado con el precio de entrada), <strong>qué pasó en la última revisión</strong>, y <strong>el recorrido entre su mínimo y su máximo</strong>, con un punto que marca dónde está hoy: verde cerca del mínimo, rojo cerca del máximo. Sirve para saber si este es un buen momento o si ya estuvo más barato.</p>
     </div>
     <div class="help-item">
@@ -1367,6 +1373,45 @@ function cambioReciente(s) {
          ' en la última revisión</span>';
 }
 
+/* "10/09" a partir del texto ISO que manda el backend (las fechas no pueden
+   viajar como Date por google.script.run). */
+function fmtFecha(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+/* El estado de stock de un producto seguido. Si todavía no se midió (lo seguís
+   desde antes de que existiera esto), no se muestra nada en vez de adivinar. */
+function stockSeguidoHtml(s) {
+  if (s.stock === 'NO') {
+    return '<span class="badge nostock">SIN STOCK' +
+           (s.sinStockDesde ? ' desde el ' + fmtFecha(s.sinStockDesde) : '') + '</span>';
+  }
+  if (s.stock === 'SI') return '<span class="badge stock">EN STOCK</span>';
+  return '';
+}
+
+/* El botón solo aparece cuando tiene sentido: si está agotado, o si el aviso ya
+   está prendido y todavía no salió el mail (puede haber vuelto hoy mismo). */
+function botonAvisoStock(s, i) {
+  if (s.stock !== 'NO' && !s.avisarStock) return '';
+  return s.avisarStock
+    ? '<button class="mini-btn aviso on" title="Te llega un mail la próxima vez que vuelva a tener stock. ' +
+      'Tocá para cancelarlo." onclick="toggleAvisoStock(' + i + ')">🔔 Te aviso</button>'
+    : '<button class="mini-btn aviso" title="Avisame por mail cuando vuelva a tener stock" ' +
+      'onclick="toggleAvisoStock(' + i + ')">🔔 Avisar si vuelve</button>';
+}
+
+function toggleAvisoStock(i) {
+  const s = seguimiento[i];
+  if (!s) return;
+  s.avisarStock = !s.avisarStock;
+  pintarSeguimiento();   // igual que la prioridad: se pinta ya y se guarda después
+  guardarCambioSeguimiento(s.id, { avisarStock: s.avisarStock });
+}
+
 function renderSeguimiento(data) {
   seguimiento = data || [];
   pintarSeguimiento();
@@ -1420,10 +1465,11 @@ function pintarSeguimiento() {
              '<div class="list-info">' +
                '<div class="list-name">' + escapeHtml(s.name) + '</div>' +
                '<div class="list-sub">' + escapeHtml(s.site) + ' · ' + precioHtml + ' ' + varHtml + ' ' + objetivoHtml + '</div>' +
-               '<div class="list-sub">' + cambioReciente(s) + '</div>' +
+               '<div class="list-sub">' + stockSeguidoHtml(s) + ' ' + cambioReciente(s) + '</div>' +
                barraRango(s) +
              '</div>' +
              '<div class="list-actions">' +
+               botonAvisoStock(s, i) +
                '<button class="mini-btn prio p' + pr.valor + (s.moviendose ? ' eligiendo' : '') +
                  '" title="Prioridad ' + pr.nombre + ' — tocá para cambiarla" ' +
                  'onclick="rotarPrioridad(' + i + ')">' + pr.nombre + '</button>' +
@@ -1571,7 +1617,10 @@ function renderDock() {
       : '';
     return '<a class="dock-item" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">' +
              '<span class="dock-name">' + escapeHtml(s.name) + '</span>' +
-             '<span class="dock-meta">' + escapeHtml(s.site) + '</span>' +
+             '<span class="dock-meta">' + escapeHtml(s.site) +
+               (s.stock === 'NO' ? ' · <span class="dock-agotado">sin stock' +
+                 (s.avisarStock ? ' 🔔' : '') + '</span>' : '') +
+             '</span>' +
              '<span class="dock-price">' +
                (s.precioActual != null ? fmtPrice(s.precioActual) : '—') + ' ' + varHtml +
              '</span>' +

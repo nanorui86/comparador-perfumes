@@ -323,12 +323,14 @@ function obtenerSheet_() {
 
 const COLUMNAS_SEGUIMIENTO = ['ID', 'Nombre', 'Sitio', 'URL', 'Precio inicial', 'Precio actual',
                               'Precio objetivo', 'Prioridad', 'Fecha agregado', 'Última revisión',
-                              'Última alerta', 'Precio anterior', 'Precio mínimo', 'Precio máximo'];
+                              'Última alerta', 'Precio anterior', 'Precio mínimo', 'Precio máximo',
+                              'Stock', 'Sin stock desde', 'Avisar si vuelve'];
 
 /**
- * Las tres últimas columnas se agregaron después. Si la planilla es de antes,
- * se le escriben los encabezados y se arranca el mínimo y el máximo con el
- * precio que cada producto tenga hoy: no hay historia previa que inventar.
+ * Las columnas se fueron agregando con el tiempo. Si la planilla es de antes, se
+ * le escriben los encabezados que falten. El mínimo y el máximo arrancan con el
+ * precio que cada producto tenga hoy (no hay historia previa que inventar), y
+ * las de stock quedan vacías hasta la próxima revisión, que es la que lo mide.
  */
 function asegurarColumnasSeguimiento_(sheet) {
   const anchoActual = sheet.getLastColumn();
@@ -337,7 +339,7 @@ function asegurarColumnasSeguimiento_(sheet) {
   sheet.getRange(1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([COLUMNAS_SEGUIMIENTO]);
 
   const ultima = sheet.getLastRow();
-  if (ultima < 2) return;
+  if (ultima < 2 || anchoActual >= 14) return;   // mínimo y máximo ya estaban
 
   const actuales = sheet.getRange(2, 6, ultima - 1, 1).getValues();
   const nuevas = actuales.map(function (f) {
@@ -378,6 +380,7 @@ function migrarCarritoASeguimiento_(ss, segSheet) {
       '',                   // Precio anterior
       precio,               // Precio mínimo
       precio,               // Precio máximo
+      '', '', '',           // Stock, Sin stock desde, Avisar si vuelve
     ]);
   }
 
@@ -443,9 +446,14 @@ function eliminarFavorito(query) {
  * productos que estás siguiendo.
  */
 function revisarFavoritosYAlertar() {
-  const alertas = { busquedas: revisarFavoritos_(), productos: revisarSeguimiento_() };
+  const seguimiento = revisarSeguimiento_();
+  const alertas = {
+    busquedas: revisarFavoritos_(),
+    productos: seguimiento.precios,
+    stock:     seguimiento.stock,
+  };
 
-  if (alertas.busquedas.length || alertas.productos.length) {
+  if (alertas.busquedas.length || alertas.productos.length || alertas.stock.length) {
     enviarEmailAlertas_(alertas);
   }
 }
@@ -560,16 +568,18 @@ function actualizarPreciosSeguimiento() {
 }
 
 function refrescarPrecios_(conAlertas) {
+  const salida = { precios: [], stock: [] };
   const seguidos = listarSeguimiento();
-  if (seguidos.length === 0) return [];
+  if (seguidos.length === 0) return salida;
 
   const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const filas = sheet.getDataRange().getValues();
   const histSheet = obtenerSheet_().getSheetByName('Historial');
   const ahora = new Date();
-  const alertas = [];
   const cache = {};   // una misma búsqueda sirve para varios productos de la misma tienda
 
+  // 1) Ubicar cada producto en su propia tienda.
+  const medidos = [];
   seguidos.forEach(function (seg) {
     const site = sitioPorNombre_(seg.site);
     if (!site) return;
@@ -589,27 +599,82 @@ function refrescarPrecios_(conAlertas) {
     if (!encontrados) return;
 
     const match = encontrados.filter(function (r) { return r.url === seg.url; })[0];
-    if (!match) return;   // ya no aparece: se deja el precio anterior, no se inventa
+    if (match) medidos.push({ seg: seg, site: site, match: match });
+    // Si ya no aparece, se deja todo como estaba: hay tiendas que esconden de la
+    // búsqueda lo agotado, y eso no alcanza para afirmar que no hay.
+  });
 
+  // 2) Confirmar el stock en la ficha cuando el listado no es confiable. Un mail
+  //    de "volvió el stock" tiene que estar confirmado, no deducido de un cartel.
+  const aVerificar = medidos
+    .filter(function (m) { return m.match.stockFuente !== 'dato' && TIPOS_VERIFICABLES[m.site.type]; })
+    .map(function (m) { return { url: m.seg.url, site: m.seg.site }; });
+
+  const confirmado = {};
+  for (let i = 0; i < aVerificar.length; i += 20) {   // verificarStockLote atiende de a 20
+    const lote = verificarStockLote(aVerificar.slice(i, i + 20));
+    Object.keys(lote).forEach(function (url) { confirmado[url] = lote[url]; });
+  }
+  medidos.forEach(function (m) {
+    const v = confirmado[m.seg.url];
+    if (v === true || v === false) m.match.inStock = v;
+  });
+
+  // 3) Escribir lo medido y armar los avisos.
+  medidos.forEach(function (m) {
+    const seg = m.seg;
+    const match = m.match;
     const precioHoy = precioEfectivo_(match);
-    if (precioHoy == null) return;
+    const stockHoy = match.inStock === true ? 'SI' : (match.inStock === false ? 'NO' : '');
 
     const fila = indiceDeFila_(filas, seg.id);
     if (fila > 0) {
-      // Una sola escritura con toda la fila en vez de cinco sueltas: con varios
+      // Una sola escritura con toda la fila en vez de varias sueltas: con muchos
       // productos seguidos, cada llamada a la planilla se nota.
-      const nueva = filas[fila].slice();
-      nueva[5]  = precioHoy;                                  // precio actual
-      nueva[9]  = ahora;                                      // última revisión
-      nueva[11] = seg.precioActual == null ? '' : seg.precioActual;  // el de antes de hoy
-      nueva[12] = seg.precioMin == null ? precioHoy : Math.min(seg.precioMin, precioHoy);
-      nueva[13] = seg.precioMax == null ? precioHoy : Math.max(seg.precioMax, precioHoy);
+      const nueva = completarFila_(filas[fila]);
+      nueva[9] = ahora;                                         // última revisión
+
+      // El precio puede faltar justo cuando el producto está agotado (hay tiendas
+      // que lo esconden). Antes eso hacía saltear el producto entero y el "sin
+      // stock" no quedaba registrado; ahora se guarda el stock igual.
+      if (precioHoy != null) {
+        nueva[5]  = precioHoy;                                  // precio actual
+        nueva[11] = seg.precioActual == null ? '' : seg.precioActual;   // el de antes de hoy
+        nueva[12] = seg.precioMin == null ? precioHoy : Math.min(seg.precioMin, precioHoy);
+        nueva[13] = seg.precioMax == null ? precioHoy : Math.max(seg.precioMax, precioHoy);
+      }
+
+      // Si hoy no se sabe, no se toca: "no se sabe" no borra un "sin stock" anterior.
+      if (stockHoy) {
+        nueva[14] = stockHoy;
+        if (stockHoy === 'NO' && !seg.sinStockDesde) nueva[15] = ahora;   // desde cuándo
+        if (stockHoy === 'SI') nueva[15] = '';
+      }
+
       sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([nueva]);
-      filas[fila] = nueva;   // para que la marca de alerta de más abajo no pise esto
+      filas[fila] = nueva;   // para que las marcas de alerta de más abajo no pisen esto
     }
-    histSheet.appendRow([ahora, seg.name, seg.site, match.name, precioHoy, match.inStock, seg.url]);
+    histSheet.appendRow([ahora, seg.name, seg.site, match.name,
+                         precioHoy == null ? '' : precioHoy, match.inStock, seg.url]);
 
     if (!conAlertas) return;
+
+    // Aviso de stock: es de un solo uso, como el "avisame cuando llegue" de las
+    // tiendas. Se manda y se apaga. Se decide por el estado de hoy y no por el
+    // cambio respecto a ayer, así "Actualizar ahora" no se come el mail: si lo
+    // tocaste y viste que volvió, el aviso sigue prendido y el mail de las 9 sale.
+    if (seg.avisarStock && stockHoy === 'SI') {
+      salida.stock.push({
+        name: seg.name, site: seg.site, url: seg.url,
+        precioHoy: precioHoy, sinStockDesde: seg.sinStockDesde,
+      });
+      if (fila > 0) {
+        sheet.getRange(fila + 1, 17).setValue('');
+        filas[fila][16] = '';
+      }
+    }
+
+    if (precioHoy == null) return;
 
     // Avisa si llegó al objetivo o, sin objetivo, si bajó al menos un 5% del
     // precio con el que lo empezaste a seguir. El umbral evita que un redondeo
@@ -622,7 +687,7 @@ function refrescarPrecios_(conAlertas) {
     const huella = String(precioHoy);
     if (fila > 0 && String(filas[fila][10]) === huella) return;   // ya se avisó a este precio
 
-    alertas.push({
+    salida.precios.push({
       name: seg.name, site: seg.site, url: seg.url,
       precioInicial: seg.precioInicial, precioHoy: precioHoy,
       objetivo: seg.precioObjetivo, enStock: match.inStock,
@@ -633,7 +698,24 @@ function refrescarPrecios_(conAlertas) {
     }
   });
 
-  return alertas;
+  return salida;
+}
+
+/** La fila con todas las columnas, aunque la planilla venga de una versión con menos. */
+function completarFila_(fila) {
+  const nueva = fila.slice(0, COLUMNAS_SEGUIMIENTO.length);
+  while (nueva.length < COLUMNAS_SEGUIMIENTO.length) nueva.push('');
+  return nueva;
+}
+
+/**
+ * google.script.run no puede devolver fechas: si un objeto trae un Date, la
+ * respuesta entera llega como null. Por eso las fechas viajan como texto ISO.
+ */
+function fechaISO_(valor) {
+  if (!valor) return null;
+  const d = valor instanceof Date ? valor : new Date(valor);
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 function indiceDeFila_(filas, id) {
@@ -658,6 +740,26 @@ const SEPARADOR_2 = NL + NL + '═'.repeat(40) + NL + NL;
 
 function enviarEmailAlertas_(alertas) {
   const partes = [];
+  const stock = alertas.stock || [];
+
+  // Va primero: de los tres avisos es el más urgente, porque lo que vuelve a
+  // entrar en stock suele volver a agotarse rápido.
+  if (stock.length) {
+    const bloques = stock.map(function (a) {
+      const desde = a.sinStockDesde
+        ? ' (estaba agotado desde el ' + Utilities.formatDate(new Date(a.sinStockDesde),
+            Session.getScriptTimeZone(), 'dd/MM') + ')'
+        : '';
+      return '🔔 ' + a.name + NL +
+             '   ' + a.site + ' — volvió a tener stock' + desde +
+             (a.precioHoy != null ? NL + '   Precio hoy: ' + pesos_(a.precioHoy) : '') +
+             NL + '   ' + a.url;
+    }).join(NL + NL);
+
+    partes.push('VOLVIÓ EL STOCK' + NL + NL +
+                'Te aviso una sola vez por producto. Si se vuelve a agotar y querés otro' + NL +
+                'aviso, prendelo de nuevo desde Siguiendo.' + NL + NL + bloques);
+  }
 
   if (alertas.busquedas.length) {
     const bloques = alertas.busquedas.map(function (a) {
@@ -716,12 +818,15 @@ function enviarEmailAlertas_(alertas) {
    tres perfumes, tres tiendas o tres búsquedas. Son búsquedas y productos. */
 function asuntoAlertas_(alertas) {
   const partes = [];
+  const s = (alertas.stock || []).length;
   const b = alertas.busquedas.length;
   const p = alertas.productos.length;
 
+  if (s) partes.push(s + (s === 1 ? ' perfume volvió a tener stock' : ' perfumes volvieron a tener stock'));
   if (b) partes.push(b + (b === 1 ? ' búsqueda con ofertas' : ' búsquedas con ofertas'));
   if (p) partes.push(p + (p === 1 ? ' producto que bajó' : ' productos que bajaron'));
-  return partes.join(' y ');
+  return partes.length <= 2 ? partes.join(' y ')
+                            : partes.slice(0, -1).join(', ') + ' y ' + partes[partes.length - 1];
 }
 
 function pesos_(n) {
@@ -800,6 +905,9 @@ function filaASeguido_(fila) {
     precioAnterior: fila[11] === '' || fila[11] == null ? null : Number(fila[11]),
     precioMin:      fila[12] === '' || fila[12] == null ? null : Number(fila[12]),
     precioMax:      fila[13] === '' || fila[13] == null ? null : Number(fila[13]),
+    stock:          fila[14] === 'SI' || fila[14] === 'NO' ? fila[14] : null,
+    sinStockDesde:  fechaISO_(fila[15]),
+    avisarStock:    fila[16] === 'SI',
   };
 }
 
@@ -853,6 +961,9 @@ function agregarASeguimiento(item) {
     '',                             // precio anterior: todavía no hubo revisión
     precio == null ? '' : precio,   // mínimo
     precio == null ? '' : precio,   // máximo
+    item.inStock === true ? 'SI' : (item.inStock === false ? 'NO' : ''),
+    item.inStock === false ? new Date() : '',   // sin stock desde
+    '',                                         // avisar si vuelve: lo prendés vos
   ]);
   return listarSeguimiento();
 }
@@ -895,6 +1006,9 @@ function actualizarSeguimiento(id, campos) {
     }
     if (campos && campos.prioridad !== undefined) {
       sheet.getRange(fila, 8).setValue(Number(campos.prioridad) || PRIORIDAD_NORMAL);
+    }
+    if (campos && campos.avisarStock !== undefined) {
+      sheet.getRange(fila, 17).setValue(campos.avisarStock ? 'SI' : '');
     }
     return;
   }
