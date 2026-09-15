@@ -163,6 +163,9 @@ puede borrar a mano cuando se quiera.
    (sin extensión, así lo nombra Apps Script).
 3. Implementar como aplicación web.
 
+Los mails de alerta llegan a la cuenta dueña del script, la que crea el disparador diario
+`revisarFavoritosYAlertar`. No hay ninguna dirección escrita en el código.
+
 **Al actualizar hay que crear una versión nueva** (Implementar → Gestionar implementaciones →
 lápiz → Versión: Nueva). Guardar sin crear versión deja la web app sirviendo el código viejo.
 
@@ -173,3 +176,7 @@ el panel de tiendas y el contador del subtítulo se actualizan solos. Lo mismo c
 viven en `MARCAS_CONOCIDAS` y de ahí salen los chips de búsqueda.
 
 Si la tienda usa una plataforma ya soportada, no hace falta escribir ningún scraper.
+
+## Licencia
+
+MIT. Ver [`LICENSE`](LICENSE).
