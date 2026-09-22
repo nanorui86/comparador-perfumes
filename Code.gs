@@ -76,6 +76,36 @@ function buscarPerfumes(query) {
 /**
  * Lógica compartida de búsqueda en los 10 sitios.
  */
+/**
+ * "rome extradose -femme -mast" -> { consulta: 'rome extradose', excluir: ['femme', 'mast'] }
+ *
+ * Una palabra con guion adelante no se busca: descarta los resultados que la
+ * tengan. Hace falta porque la relevancia pide que estén todas las palabras
+ * pedidas y nada más, así que "rome extradose" también daba por buena la
+ * versión de mujer y la de otra marca que se llama igual.
+ */
+function partirConsulta_(query) {
+  const positivos = [], excluir = [];
+
+  String(query == null ? '' : query).split(/\s+/).forEach(function (t) {
+    if (!t) return;
+    if ((t.charAt(0) === '-' || t.charAt(0) === '–') && t.length > 1) {
+      palabrasDe_(t.slice(1)).forEach(function (w) { excluir.push(w); });
+    } else {
+      positivos.push(t);
+    }
+  });
+
+  return { consulta: positivos.join(' '), excluir: excluir };
+}
+
+function tieneExcluida_(name, excluir) {
+  if (!excluir || !excluir.length) return false;
+  const enElNombre = {};
+  palabrasDe_(name).forEach(function (w) { enElNombre[w] = true; });
+  return excluir.some(function (w) { return enElNombre[w] === true; });
+}
+
 function buscarTodos_(query) {
   const output = { query: query, results: [], errors: [] };
 
@@ -84,21 +114,29 @@ function buscarTodos_(query) {
     return output;
   }
 
+  const partes = partirConsulta_(query);
+  if (!partes.consulta) {
+    output.errors.push('La búsqueda solo tiene palabras excluidas');
+    return output;
+  }
+
   // Para las tiendas que no ponen la marca en el nombre del producto (ej. Klutch,
   // que publica "Khamrah" y no "Lattafa Khamrah"): si una tienda no devuelve nada,
   // se reintenta una sola vez sacando de la búsqueda las palabras que son marca.
-  const queryAlternativa = consultaSinMarca_(query);
+  const queryAlternativa = consultaSinMarca_(partes.consulta);
 
   SITES.forEach(function (site) {
     try {
-      let items = buscarEnSitio_(site, query);
+      let items = buscarEnSitio_(site, partes.consulta);
 
       if (items.length === 0 && queryAlternativa) {
         items = buscarEnSitio_(site, queryAlternativa);
         items.forEach(function (item) { item.marcaOmitida = true; });
       }
 
-      items.forEach(function (item) { output.results.push(item); });
+      items.forEach(function (item) {
+        if (!tieneExcluida_(item.name, partes.excluir)) output.results.push(item);
+      });
     } catch (err) {
       output.errors.push(site.name + ': ' + err.message);
     }
@@ -302,8 +340,9 @@ function obtenerSheet_() {
 
   // Nos aseguramos de que TODAS las pestañas existan, aunque la planilla ya existiera de antes
   if (!ss.getSheetByName('Favoritos')) {
-    const favSheet = ss.insertSheet('Favoritos');
-    favSheet.appendRow(['Búsqueda', 'Precio objetivo', 'Fecha agregado', 'Última alerta enviada']);
+    ss.insertSheet('Favoritos').appendRow(COLUMNAS_FAVORITOS);
+  } else {
+    asegurarColumnasFavoritos_(ss.getSheetByName('Favoritos'));
   }
   if (!ss.getSheetByName('Historial')) {
     ss.insertSheet('Historial').appendRow(COLUMNAS_HISTORIAL);
@@ -424,6 +463,15 @@ function migrarCarritoASeguimiento_(ss, segSheet) {
   viejo.setName('Carrito (viejo)');
 }
 
+const COLUMNAS_FAVORITOS = ['Búsqueda', 'Precio objetivo', 'Fecha agregado',
+                            'Última alerta enviada', 'Tenía resultados'];
+
+/** Amplía las planillas viejas, que tenían solo las cuatro primeras columnas. */
+function asegurarColumnasFavoritos_(sheet) {
+  if (sheet.getLastColumn() >= COLUMNAS_FAVORITOS.length) return;
+  sheet.getRange(1, 1, 1, COLUMNAS_FAVORITOS.length).setValues([COLUMNAS_FAVORITOS]);
+}
+
 function agregarFavorito(query, precioObjetivo) {
   const ss = obtenerSheet_();
   const sheet = ss.getSheetByName('Favoritos');
@@ -441,10 +489,43 @@ function agregarFavorito(query, precioObjetivo) {
   return listarFavoritos();
 }
 
+/**
+ * Lo último que se vio de cada búsqueda, sacado del Historial.
+ * Sirve para mostrar el precio de hoy al lado del objetivo: un objetivo por
+ * encima del precio real convierte la alerta en un aviso de "cambió el precio".
+ */
+function ultimoVistoPorBusqueda_() {
+  const hist = obtenerSheet_().getSheetByName('Historial');
+  const out = {};
+  if (!hist || hist.getLastRow() < 2) return out;
+
+  const datos = hist.getRange(2, 1, hist.getLastRow() - 1, COLUMNAS_HISTORIAL.length).getValues();
+  const cuando = {};
+
+  datos.forEach(function (f) {
+    if (String(f[1]) !== 'búsqueda' || !f[0]) return;
+    const clave = String(f[2]).toLowerCase();
+    const fecha = new Date(f[0]);
+    if (isNaN(fecha.getTime())) return;
+    if (cuando[clave] && fecha < cuando[clave]) return;
+
+    cuando[clave] = fecha;
+    out[clave] = {
+      precio: Number(f[5]) || null,
+      tienda: String(f[3]),
+      nombre: String(f[4]),
+      fecha: fechaISO_(fecha),   // texto: google.script.run no sabe devolver Date
+    };
+  });
+
+  return out;
+}
+
 function listarFavoritos() {
   const ss = obtenerSheet_();
   const sheet = ss.getSheetByName('Favoritos');
   const data = sheet.getDataRange().getValues();
+  const ultimos = ultimoVistoPorBusqueda_();
   const favoritos = [];
 
   for (let i = 1; i < data.length; i++) {
@@ -452,6 +533,7 @@ function listarFavoritos() {
     favoritos.push({
       query: data[i][0],
       precioObjetivo: data[i][1] || null,
+      ultimo: ultimos[String(data[i][0]).toLowerCase()] || null,
     });
   }
 
@@ -668,13 +750,16 @@ function resumirPorMes_(filas) {
  */
 function revisarFavoritosYAlertar() {
   const seguimiento = revisarSeguimiento_();
+  const favoritos = revisarFavoritos_();
   const alertas = {
-    busquedas: revisarFavoritos_(),
-    productos: seguimiento.precios,
-    stock:     seguimiento.stock,
+    busquedas:   favoritos.ofertas,
+    apariciones: favoritos.apariciones,
+    productos:   seguimiento.precios,
+    stock:       seguimiento.stock,
   };
 
-  if (alertas.busquedas.length || alertas.productos.length || alertas.stock.length) {
+  if (alertas.busquedas.length || alertas.apariciones.length ||
+      alertas.productos.length || alertas.stock.length) {
     enviarEmailAlertas_(alertas);
   }
 
@@ -688,10 +773,11 @@ function revisarFavoritosYAlertar() {
 
 function revisarFavoritos_() {
   const favoritos = listarFavoritos();
-  if (favoritos.length === 0) return [];
+  if (favoritos.length === 0) return { ofertas: [], apariciones: [] };
 
   const ahora = new Date();
   const alertas = [];
+  const apariciones = [];
   const paraHistorial = [];
 
   favoritos.forEach(function (fav) {
@@ -703,6 +789,20 @@ function revisarFavoritos_() {
     if (mejor) {
       paraHistorial.push([ahora, 'búsqueda', fav.query, mejor.site, mejor.name,
                           precioEfectivo_(mejor), stockTexto_(mejor.inStock), mejor.url]);
+    }
+
+    // Una búsqueda que no devolvía nada en ninguna tienda y ahora sí es el único
+    // descubrimiento que Siguiendo no puede hacer: avisa aunque esté cara.
+    // La primera vez solo se anota el estado, sin avisar.
+    const hayAhora = resultado.results.length > 0;
+    const habiaAntes = obtenerTeniaResultados_(fav.query);
+    guardarTeniaResultados_(fav.query, hayAhora ? 'SI' : 'NO');
+
+    if (hayAhora && habiaAntes === 'NO') {
+      apariciones.push({
+        query: fav.query, objetivo: fav.precioObjetivo,
+        mejor: mejor, cuantos: resultado.results.length,
+      });
     }
 
     if (!fav.precioObjetivo) return;
@@ -743,7 +843,7 @@ function revisarFavoritos_() {
   });
 
   anotarHistorial_(paraHistorial);
-  return alertas;
+  return { ofertas: alertas, apariciones: apariciones };
 }
 
 /** Convierte la huella guardada ("Tienda:precio") en { tienda: precio }. */
@@ -993,6 +1093,23 @@ function enviarEmailAlertas_(alertas) {
                 'aviso, prendelo de nuevo desde Siguiendo.' + NL + NL + bloques);
   }
 
+  const apariciones = alertas.apariciones || [];
+  if (apariciones.length) {
+    const bloques = apariciones.map(function (a) {
+      const m = a.mejor;
+      return '🆕 "' + a.query + '"' + NL +
+             (m ? '   Apareció en ' + m.site + ' a ' + pesos_(precioEfectivo_(m)) +
+                  (a.objetivo ? '  (tu objetivo es ' + pesos_(a.objetivo) + ')' : '') +
+                  NL + '   ' + m.url
+                : '   Ya la tiene alguna tienda, pero sin precio publicado') +
+             (a.cuantos > 1 ? NL + '   ' + a.cuantos + ' resultados en total' : '');
+    }).join(NL + NL);
+
+    partes.push('APARECIÓ ALGO QUE NO ESTABA' + NL + NL +
+                'Estas búsquedas no devolvían nada en ninguna tienda. El aviso sale igual,' + NL +
+                'aunque el precio esté por encima de tu objetivo.' + NL + NL + bloques);
+  }
+
   if (alertas.busquedas.length) {
     const bloques = alertas.busquedas.map(function (a) {
       const antes = a.anterior || {};
@@ -1050,10 +1167,12 @@ function enviarEmailAlertas_(alertas) {
    tres perfumes, tres tiendas o tres búsquedas. Son búsquedas y productos. */
 function asuntoAlertas_(alertas) {
   const partes = [];
+  const n = (alertas.apariciones || []).length;
   const s = (alertas.stock || []).length;
   const b = alertas.busquedas.length;
   const p = alertas.productos.length;
 
+  if (n) partes.push(n + (n === 1 ? ' búsqueda que apareció' : ' búsquedas que aparecieron'));
   if (s) partes.push(s + (s === 1 ? ' perfume volvió a tener stock' : ' perfumes volvieron a tener stock'));
   if (b) partes.push(b + (b === 1 ? ' búsqueda con ofertas' : ' búsquedas con ofertas'));
   if (p) partes.push(p + (p === 1 ? ' producto que bajó' : ' productos que bajaron'));
@@ -1094,6 +1213,27 @@ function obtenerUltimaAlerta_(query) {
     }
   }
   return '';
+}
+
+function obtenerTeniaResultados_(query) {
+  const data = obtenerSheet_().getSheetByName('Favoritos').getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
+      return String(data[i][4] || '').toUpperCase();
+    }
+  }
+  return '';
+}
+
+function guardarTeniaResultados_(query, valor) {
+  const sheet = obtenerSheet_().getSheetByName('Favoritos');
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).toLowerCase() === String(query).toLowerCase()) {
+      sheet.getRange(i + 1, 5).setValue(valor);
+      break;
+    }
+  }
 }
 
 function guardarUltimaAlerta_(query, valor) {

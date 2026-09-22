@@ -571,9 +571,9 @@
   </div>
 
   <div class="action-row">
-    <button class="btn" id="favBtn" onclick="togglePanel('favPanel','favBtn', cargarFavoritos)">☆ Favoritos <span class="btn-count" id="favCount" hidden></span></button>
+    <button class="btn" id="favBtn" onclick="togglePanel('favPanel','favBtn', cargarFavoritos)">🎯 Vigilancia <span class="btn-count" id="favCount" hidden></span></button>
     <button class="btn" id="segBtn" onclick="togglePanel('segPanel','segBtn', cargarSeguimiento)">📉 Siguiendo <span class="btn-count" id="segCount" hidden></span></button>
-    <button class="btn" onclick="guardarFavoritoActual()">＋ Guardar búsqueda</button>
+    <button class="btn" onclick="guardarFavoritoActual()">＋ Vigilar esta búsqueda</button>
   </div>
 
   <div class="panel" id="storesPanel">
@@ -609,12 +609,15 @@
       <p>Algunas tiendas no ponen la marca en el nombre del producto (publican "Khamrah", no "Lattafa Khamrah"). Cuando una tienda no devuelve nada, el sistema reintenta sin la marca y marca esos resultados con este cartelito, para que sepas que la coincidencia fue por el resto del nombre.</p>
     </div>
     <div class="help-item">
-      <h4>☆ Favoritos</h4>
-      <p>Guardá una búsqueda (ej: "khamrah") para no reescribirla. Si le ponés un precio objetivo, todos los días a las 9am el sistema revisa las tiendas y te manda un email si alguna está por debajo de ese precio. Solo avisa si algo cambió.</p>
+      <h4>🎯 Vigilancia de precios</h4>
+      <p>Guardá una búsqueda (ej: "khamrah") y todos los días a las 9am se busca en <strong>las 13 tiendas a la vez</strong>. Si le ponés un precio objetivo, te llega un mail cuando alguna queda por debajo. Solo avisa si algo cambió. Es lo que Siguiendo no puede hacer: revisa cada producto solo en la tienda donde lo agregaste.</p>
+      <p><strong>Sacar variantes que no querés.</strong> Una palabra con un guion adelante descarta los resultados que la tengan: <code>rome extradose -femme -mast</code>. Sirve porque para el sistema alcanza con que estén todas las palabras que escribiste, así que la versión de mujer, otro tamaño o la de otra marca con el mismo nombre también entran.</p>
+      <p><strong>Avisa cuando aparece.</strong> Si una búsqueda no devuelve nada en ninguna tienda y un día aparece, te llega un mail aunque esté por encima de tu objetivo. Es la única forma de enterarte de algo que todavía no consigue nadie.</p>
+      <p><strong>Al lado de cada búsqueda ves el precio de hoy.</strong> Si tu objetivo quedó por encima de ese precio, la búsqueda ya no avisa oportunidades: avisa cada vez que cambia el precio. Conviene bajarlo.</p>
     </div>
     <div class="help-item">
       <h4>📉 Siguiendo</h4>
-      <p>A diferencia de Favoritos (que guarda una búsqueda y sigue al mercado), esto sigue <em>un producto puntual</em> en una tienda puntual. Guarda con qué precio entró y todos los días a las 9 vuelve a mirarlo; también podés forzarlo con "Actualizar ahora". Si baja, te avisa por mail: podés ponerle un precio objetivo con 🎯, y si no le ponés ninguno avisa cuando baje un 5% del precio de entrada.</p>
+      <p>A diferencia de la Vigilancia de precios (que guarda una búsqueda y mira las 13 tiendas), esto sigue <em>un producto puntual</em> en una tienda puntual. Guarda con qué precio entró y todos los días a las 9 vuelve a mirarlo; también podés forzarlo con "Actualizar ahora". Si baja, te avisa por mail: podés ponerle un precio objetivo con 🎯, y si no le ponés ninguno avisa cuando baje un 5% del precio de entrada.</p>
       <p><strong>🔔 Avisar si vuelve.</strong> Si un producto que seguís está agotado, aparece este botón. Prendelo y la próxima vez que la revisión diaria lo encuentre con stock te llega un mail. Es de un solo uso, como el "avisame cuando llegue" de las tiendas: avisa una vez y se apaga, para que no te llegue lo mismo todos los días. Antes de mandarlo, el stock se confirma abriendo la ficha del producto, así el aviso no sale por un cartel mal leído. Al lado de cada producto ves además si hay stock y, si no hay, desde qué día.</p>
       <p>De cada producto seguido ves cuatro cosas: <strong>el precio de hoy</strong> (el número grande, siempre el último medido), <strong>cuánto cambió desde que lo seguís</strong> (↓ verde si bajó, ↑ rojo si subió, comparado con el precio de entrada), <strong>qué pasó en la última revisión</strong>, y <strong>el recorrido entre su mínimo y su máximo</strong>, con un punto que marca dónde está hoy: verde cerca del mínimo, rojo cerca del máximo. Sirve para saber si este es un buen momento o si ya estuvo más barato.</p>
     </div>
@@ -626,7 +629,11 @@
   </div>
 
   <div class="panel" id="favPanel">
-    <div class="panel-title">Búsquedas guardadas</div>
+    <div class="panel-title">Vigilancia de precios</div>
+    <div class="panel-note">
+      <span>Cada mañana se buscan en las 13 tiendas. Con un guion adelante sacás variantes
+      que no querés: <code>rome extradose -femme</code>.</span>
+    </div>
     <div id="favList"></div>
   </div>
 
@@ -1260,12 +1267,29 @@ function renderFavoritos(data) {
   }
 
   el.innerHTML = favoritos.map(function (f, i) {
+    const u = f.ultimo;
+    const objetivo = f.precioObjetivo ? Number(f.precioObjetivo) : null;
+
+    // El precio de hoy al lado del objetivo: si el objetivo quedó por encima del
+    // precio real, la búsqueda deja de avisar oportunidades y avisa cambios.
+    let visto;
+    if (!u || u.precio == null) {
+      visto = '<div class="list-sub">Todavía no apareció en ninguna tienda</div>';
+    } else {
+      const flojo = objetivo != null && objetivo > u.precio;
+      visto = '<div class="list-sub">Hoy $' + u.precio.toLocaleString('es-AR') +
+              ' en ' + escapeHtml(u.tienda) +
+              (flojo ? ' · <strong>tu objetivo está por encima del precio de hoy</strong>' : '') +
+              '</div>';
+    }
+
     return '<div class="list-item">' +
              '<div class="list-info">' +
                '<div class="list-name">' + escapeHtml(f.query) + '</div>' +
-               (f.precioObjetivo
-                 ? '<div class="list-target">Avisar si baja de $' + Number(f.precioObjetivo).toLocaleString('es-AR') + '</div>'
+               (objetivo != null
+                 ? '<div class="list-target">Avisar si baja de $' + objetivo.toLocaleString('es-AR') + '</div>'
                  : '<div class="list-sub">Sin alerta de precio</div>') +
+               visto +
              '</div>' +
              '<div class="list-actions">' +
                '<button class="mini-btn" onclick="buscarFavorito(' + i + ')">Buscar</button>' +
@@ -1279,7 +1303,19 @@ function guardarFavoritoActual() {
   const q = document.getElementById('searchInput').value.trim();
   if (!q) { alert('Primero escribí algo en el buscador.'); return; }
 
-  const precio = prompt('¿Precio objetivo para avisarte por email?\n(dejá vacío si solo querés guardarlo sin alerta)');
+  // Se propone un 10% por debajo del más barato que estás viendo: un objetivo
+  // por encima del precio de mercado avisa siempre y no sirve de nada.
+  const precios = visibles.map(function (r) {
+    return r.priceTransferencia != null ? r.priceTransferencia : r.price;
+  }).filter(function (n) { return n != null; });
+
+  const masBarato = precios.length ? Math.min.apply(null, precios) : null;
+  const sugerido = masBarato ? String(Math.round(masBarato * 0.9 / 100) * 100) : '';
+
+  const precio = prompt('¿Precio objetivo para avisarte por email?\n' +
+                        (masBarato ? 'El más barato de hoy es $' + masBarato.toLocaleString('es-AR') +
+                                     '; te propongo un 10% menos.\n' : '') +
+                        '(dejá vacío si solo querés guardarlo sin alerta)', sugerido);
   if (precio === null) return;
 
   const precioLimpio = precio.trim() ? precio.replace(/\D/g, '') : '';

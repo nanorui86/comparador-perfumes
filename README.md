@@ -19,7 +19,8 @@ No hay build, no hay dependencias, no hay servidor propio.
 - **Verifica el stock** contra la ficha real del producto en las tiendas que no lo publican
   de forma confiable en el listado.
 - Filtra decants y muestras, que no son comparables con un frasco.
-- Guarda **búsquedas favoritas** con precio objetivo y avisa por mail cuando alguna tienda baja.
+- **Vigila búsquedas** en las 13 tiendas con un precio objetivo, y avisa por mail cuando alguna
+  queda por debajo. También avisa cuando una búsqueda que no conseguía nadie aparece por primera vez.
 - **Sigue productos puntuales**: guarda con qué precio entró cada uno, mide su mínimo y su
   máximo, y avisa cuando llega a tu objetivo (o baja un 5%, si no le pusiste objetivo).
 - **Avisa cuando vuelve el stock** de un producto seguido que estaba agotado.
@@ -90,11 +91,19 @@ traía medio catálogo.
 
 Son dos cosas distintas, a propósito:
 
-- Una **búsqueda guardada** ("khamrah") sigue al mercado: todos los días se consultan las 13
-  tiendas y avisa si alguna quedó por debajo del precio objetivo.
+- Una **búsqueda vigilada** ("khamrah") sigue al mercado: todos los días se consultan las 13
+  tiendas y avisa si alguna quedó por debajo del precio objetivo. Una palabra con un guion
+  adelante descarta resultados (`rome extradose -femme`), porque para el sistema alcanza con que
+  estén todas las palabras pedidas y así entran la versión de mujer o la de otra marca homónima.
+  Si la búsqueda no devolvía nada en ninguna tienda y un día aparece, el aviso sale igual, aunque
+  el precio esté por encima del objetivo: es lo único que un producto seguido no puede hacer.
 - Un **producto seguido** (un frasco concreto en una tienda concreta) sigue un precio: se
   vuelve a consultar sólo en su propia tienda y se lo ubica por URL, lo que reusa los scrapers
   ya escritos y evita trece consultas por producto.
+
+Al lado de cada búsqueda vigilada se muestra el precio de la última medición. Sirve para detectar
+el objetivo que quedó por encima del precio de mercado: esa búsqueda deja de avisar oportunidades
+y pasa a avisar cada cambio de precio.
 
 Las dos cosas las revisa el mismo disparador diario, `revisarFavoritosYAlertar`, a las 9 de la
 mañana. Desde la pantalla se puede forzar la revisión de los productos seguidos con "Actualizar
