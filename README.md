@@ -114,16 +114,23 @@ y el mínimo y el máximo alcanzados. Ojo con qué significan esos dos últimos:
 mediciones, no de todos los precios que la tienda haya tenido. Con una medición por día, un
 precio que aparece y desaparece entre revisiones no queda registrado.
 
-### Prioridad y orden
+### Marcas y prioridad
 
-Cada producto seguido tiene prioridad ALTA, MEDIA o BAJA y, dentro de cada una, un orden que se
-elige a mano con las flechas. Las flechas no cruzan de una prioridad a otra: cambiar de grupo es
-cambiar la prioridad, y el producto entra al final del grupo nuevo. La barra flotante muestra los
-de ALTA en ese mismo orden.
+Los productos seguidos se agrupan por marca en secciones plegables (se recuerda cuáles quedaron
+abiertas). El título de cada una resume cuántos hay, cuántos son ALTA, cuántos llegaron a su
+objetivo y cuántos están sin stock. La marca sale, en este orden, de lo que se le puso a mano
+(botón 🏷), de lo que publica la tienda (Pedix la trae como `groupName`) o de buscarla en el nombre
+entre `MARCAS_CONOCIDAS`; si nada coincide va a "Sin marca".
 
-El orden manual reemplazó al que había antes dentro de cada prioridad, "lo que más bajó
-primero", porque con ese criterio la lista se reacomodaba sola cada mañana según los precios.
-Cuando se agregó la columna `Orden`, se numeró con el orden que se veía hasta ese momento.
+Las fichas se mueven arrastrándolas con el mouse (manija ⠿): soltadas sobre otra ficha quedan justo
+antes; sobre el título de una marca, van al final de esa marca y, si era otra, cambian de marca.
+El orden se guarda en la columna `Orden` y la prioridad no mueve nada de lugar. Antes había
+flechas ▲▼, que resultaban incómodas; el arrastre solo anda con mouse, no en el celular.
+
+Cada ficha muestra cuándo se revisó por última vez; si pasaron dos días o más, en rojo, porque
+entonces el precio y el stock ya no son de hoy. La revisión empieza por los productos que hace más
+que no se miran y corta a los 4 minutos (Apps Script mata todo a los 6 y no se guardaría nada):
+los que queden se hacen en la próxima vuelta.
 
 ### Avisar cuando vuelva el stock
 

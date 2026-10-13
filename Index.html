@@ -398,15 +398,32 @@
   }
   .list-item:last-child { border-bottom: none; }
 
-  /* Las flechitas para ordenar a mano, en columna a la izquierda de cada fila */
-  .mover { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
-  .mover-btn {
-    font: inherit; font-size: 9px; line-height: 1; width: 22px; height: 18px; padding: 0;
-    border: 1px solid var(--border); border-radius: 5px;
-    background: transparent; color: var(--muted); cursor: pointer;
+  /* Los productos seguidos, agrupados por marca en secciones plegables */
+  .seg-tools { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 8px; }
+  .seg-group { border: 1px solid var(--border-soft); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  .seg-group.abierta { border-color: var(--border); }
+  .seg-head {
+    font: inherit; width: 100%; display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border: none; background: transparent; color: var(--text);
+    cursor: pointer; text-align: left;
   }
-  .mover-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-  .mover-btn:disabled { opacity: .25; cursor: default; }
+  .seg-head:hover { background: var(--border-soft); }
+  .seg-flecha { color: var(--faint); width: 12px; flex-shrink: 0; }
+  .seg-marca { font-weight: 650; font-size: 13.5px; }
+  .seg-n { color: var(--muted); font-size: 12px; }
+  .seg-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+  .seg-chip { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
+  .seg-chip.alta { color: var(--warn); border-color: var(--warn); }
+  .seg-chip.ok { color: var(--ok); border-color: var(--ok); }
+  .seg-chip.agotado { color: var(--danger); border-color: var(--danger); }
+  .seg-body { padding: 0 12px; border-top: 1px solid var(--border-soft); }
+  .asa { color: var(--faint); cursor: grab; font-size: 15px; flex-shrink: 0; user-select: none; }
+  .list-item[draggable="true"]:active { cursor: grabbing; }
+  .list-item.arrastrada { opacity: .4; }
+  .list-item.sobre { box-shadow: 0 -2px 0 var(--accent); }
+  .seg-head.sobre { background: var(--border-soft); outline: 2px dashed var(--accent); outline-offset: -3px; }
+  .revision { color: var(--faint); font-size: 11px; }
+  .revision.viejo { color: var(--danger); font-weight: 600; }
   .list-info { min-width: 0; flex: 1; }
   .list-name { font-weight: 620; margin-bottom: 2px; }
   .list-sub { color: var(--muted); font-size: 11.5px; }
@@ -623,7 +640,7 @@
     </div>
     <div class="help-item">
       <h4>★ Prioridad</h4>
-      <p><strong>Ordenar a mano.</strong> Con las flechitas ▲▼ de la izquierda movés cada producto dentro de su prioridad, y ese orden se respeta también en la barra de abajo a la derecha. Las flechas no cruzan de un grupo a otro: para pasar un producto de MEDIA a ALTA se cambia la prioridad, y ahí entra al final del grupo nuevo.</p>
+      <p><strong>Por marca.</strong> Los productos que seguís están agrupados por marca en secciones que se pliegan y se despliegan (se acuerda cuáles dejaste abiertas). En cada título ves cuántos hay y, si corresponde, cuántos son prioridad ALTA (★), cuántos llegaron a tu objetivo (🎯) y cuántos están sin stock. La marca sale sola del nombre o de lo que publica la tienda; si un producto cae en "Sin marca", tocá 🏷 para ponérsela. <strong>Para moverlas</strong>, agarrá una ficha con el mouse (la manija ⠿ de la izquierda) y soltala sobre otra ficha: queda justo antes. Si la soltás sobre el título de una marca, pasa al final de esa marca, y si es de otra marca, se cambia de marca. El orden queda guardado. La prioridad no mueve nada de lugar.</p>
       <p>Cada producto seguido tiene una prioridad: tocá el botón para rotar entre ALTA, MEDIA y BAJA. La lista no se reacomoda mientras elegís — espera un par de segundos a que dejes de tocar, así el que pasa por BAJA no se te escapa al fondo cuando ibas a ALTA. Los de prioridad ALTA aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en ALTA, la barra no aparece.</p>
     </div>
   </div>
@@ -745,6 +762,7 @@ function guardarPrefs() {
       soloStock: document.getElementById('stockOnly').checked,
       agrupar:   document.getElementById('agruparChk').checked,
       dock:      dockAbierto,
+      marcas:    Object.keys(marcasAbiertas).filter(function (m) { return marcasAbiertas[m]; }),
       tema:      temaElegido
     }));
   } catch (e) { /* modo incógnito o cookies bloqueadas: no pasa nada */ }
@@ -756,6 +774,8 @@ function aplicarPrefs() {
   document.getElementById('stockOnly').checked = p.soloStock === true;
   document.getElementById('agruparChk').checked = p.agrupar !== false;  // agrupado por defecto
   dockAbierto = p.dock === true;                                       // plegado por defecto
+  marcasAbiertas = {};                                                 // las marcas, plegadas por defecto
+  (Array.isArray(p.marcas) ? p.marcas : []).forEach(function (m) { marcasAbiertas[m] = true; });
   temaElegido = (p.tema === 'light' || p.tema === 'dark') ? p.tema : null;
   aplicarTema();
   pintarToggles();
@@ -1461,53 +1481,96 @@ function toggleAvisoStock(i) {
 
 function renderSeguimiento(data) {
   seguimiento = data || [];
+  ordenarSeguimiento();
   pintarSeguimiento();
 }
 
-/* El mismo orden que aplica el backend, para poder reordenar en el momento sin
-   tener que volver a pedirle la lista. */
-/* El mismo orden que aplica el backend: primero la prioridad y, dentro de cada
-   una, el orden que elegiste a mano. Sirve para reordenar en el momento sin
-   tener que volver a pedirle la lista. */
+/* El orden es el que armaste arrastrando las fichas; los que todavía no tienen,
+   por nombre. Cambiar la prioridad no mueve nada de lugar. */
 function ordenarSeguimiento() {
   seguimiento.sort(function (a, b) {
-    if (Number(a.prioridad) !== Number(b.prioridad)) return Number(a.prioridad) - Number(b.prioridad);
     const oa = a.orden == null ? Infinity : a.orden;
     const ob = b.orden == null ? Infinity : b.orden;
     if (oa !== ob) return oa - ob;
-    return (variacion(b) || 0) - (variacion(a) || 0);
+    return String(a.name).localeCompare(String(b.name), 'es');
   });
 }
 
-/* Después de mover algo, cada producto toma su posición en la lista entera.
-   Eso conserva el orden dentro de cada prioridad y es lo que se guarda. */
-function renumerarSeguimiento() {
-  seguimiento.forEach(function (s, k) { s.orden = k; });
+/* ============ arrastrar fichas ============ */
+
+/* Se agarra una ficha de cualquier parte (menos de los botones) y se suelta sobre
+   otra ficha, que la deja justo antes, o sobre el título de una marca, que la
+   manda al final de esa marca. Si se suelta en otra marca, cambia de marca. */
+let arrastrando = null;       // índice en `seguimiento` de la ficha que se está llevando
+const ESPERA_GUARDAR_ORDEN = 1200;
+let temporizadorOrden = null;
+
+function arrastrarInicio(ev, i) {
+  arrastrando = i;
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', String(i)); } catch (e) { /* Firefox lo exige */ }
+  ev.currentTarget.classList.add('arrastrada');
 }
 
-/* ¿Se puede mover el producto i un lugar hacia arriba (-1) o abajo (+1)?
-   Solo dentro de su prioridad: pasar de un grupo a otro es cambiar la prioridad. */
-function puedeMoverse(i, delta) {
-  const s = seguimiento[i];
-  const otro = seguimiento[i + delta];
-  return !!(s && otro && Number(otro.prioridad) === Number(s.prioridad));
+function arrastrarFin() {
+  arrastrando = null;
+  document.querySelectorAll('.arrastrada, .sobre').forEach(function (e) {
+    e.classList.remove('arrastrada', 'sobre');
+  });
 }
 
-function moverSeguido(i, delta) {
-  if (!puedeMoverse(i, delta)) return;
-  const s = seguimiento[i];
-  seguimiento[i] = seguimiento[i + delta];
-  seguimiento[i + delta] = s;
-  renumerarSeguimiento();
+function arrastrarSobre(ev) {
+  if (arrastrando === null) return;
+  ev.preventDefault();   // sin esto el navegador no deja soltar
+  ev.currentTarget.classList.add('sobre');
+}
+
+function arrastrarSale(ev) {
+  ev.currentTarget.classList.remove('sobre');
+}
+
+/* Mueve la ficha `desde` para que quede antes de `antesDe` (o al final si es null)
+   y, si hace falta, la pasa a la marca `marca`. */
+function moverFicha(desde, antesDe, marca) {
+  const s = seguimiento[desde];
+  if (!s) return;
+  const objetivo = antesDe === null ? null : seguimiento[antesDe];
+  if (objetivo === s) return;
+
+  const cambiaMarca = marcaDe(s) !== marca;
+  seguimiento.splice(desde, 1);
+  const pos = objetivo ? seguimiento.indexOf(objetivo) : seguimiento.length;
+  seguimiento.splice(pos, 0, s);
+  seguimiento.forEach(function (x, k) { x.orden = k; });
+
+  if (cambiaMarca) {
+    s.marca = marca === SIN_MARCA ? '' : marca;
+    marcasAbiertas[marca] = true;   // que se vea dónde quedó
+    guardarPrefs();
+    guardarCambioSeguimiento(s.id, { marca: s.marca });
+  }
   pintarSeguimiento();   // se ve ya; se guarda después
   guardarOrdenDiferido();
 }
 
-// Si movés un producto varios lugares seguidos, se guarda una sola vez al final
-// en vez de una por toque, igual que con la prioridad.
-const ESPERA_GUARDAR_ORDEN = 1200;
-let temporizadorOrden = null;
+function soltarSobreFicha(ev, j) {
+  ev.preventDefault();
+  const desde = arrastrando;
+  arrastrarFin();
+  if (desde === null || desde === j) return;
+  moverFicha(desde, j, marcaDe(seguimiento[j]));
+}
 
+function soltarSobreMarca(ev, k) {
+  ev.preventDefault();
+  const desde = arrastrando;
+  arrastrarFin();
+  const g = gruposVista[k];
+  if (desde === null || !g) return;
+  moverFicha(desde, null, g.marca);
+}
+
+// Si movés varias fichas seguidas, se guarda una sola vez al final.
 function guardarOrdenDiferido() {
   clearTimeout(temporizadorOrden);
   temporizadorOrden = setTimeout(function () {
@@ -1521,16 +1584,131 @@ function guardarOrdenDiferido() {
   }, ESPERA_GUARDAR_ORDEN);
 }
 
-/* Las dos flechitas a la izquierda de cada fila. Se desactivan en el borde de
-   su prioridad: el primero de ALTA no sube, el último de ALTA no baja. */
-function flechasOrden(i) {
-  const sube = puedeMoverse(i, -1);
-  const baja = puedeMoverse(i, 1);
-  return '<div class="mover">' +
-           '<button class="mover-btn" title="Subir" ' + (sube ? '' : 'disabled ') +
-             'onclick="moverSeguido(' + i + ', -1)">▲</button>' +
-           '<button class="mover-btn" title="Bajar" ' + (baja ? '' : 'disabled ') +
-             'onclick="moverSeguido(' + i + ', 1)">▼</button>' +
+/* ============ marcas plegables ============ */
+
+const SIN_MARCA = 'Sin marca';
+let marcasAbiertas = {};      // marca -> true; se recuerda entre visitas
+
+function sinAcentos(t) {
+  const s = String(t == null ? '' : t).toLowerCase();
+  return s.normalize ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s;
+}
+
+/* La marca de un producto: la que le pusiste o la que publica la tienda y, si no
+   hay ninguna, la que aparezca escrita en el nombre. Si tampoco, "Sin marca". */
+function marcaDe(s) {
+  if (s.marca) return s.marca;
+  const nombre = ' ' + sinAcentos(s.name).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  let mejor = '';
+  MARCAS.forEach(function (m) {
+    const clave = ' ' + sinAcentos(m).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+    if (nombre.indexOf(clave) !== -1 && m.length > mejor.length) mejor = m;
+  });
+  return mejor || SIN_MARCA;
+}
+
+/* Las marcas en orden alfabético, "Sin marca" al final, cada una con los índices
+   de sus productos en `seguimiento` (los botones de cada ficha usan ese índice). */
+function agruparPorMarca() {
+  const mapa = {};
+  seguimiento.forEach(function (s, i) {
+    const m = marcaDe(s);
+    (mapa[m] = mapa[m] || []).push(i);
+  });
+  return Object.keys(mapa).sort(function (a, b) {
+    if (a === SIN_MARCA) return 1;
+    if (b === SIN_MARCA) return -1;
+    return a.localeCompare(b, 'es');
+  }).map(function (m) { return { marca: m, indices: mapa[m] }; });
+}
+
+function estaEnObjetivo(s) {
+  return s.precioObjetivo != null && s.precioActual != null && s.precioActual <= s.precioObjetivo;
+}
+
+let gruposVista = [];         // los grupos tal como se pintaron; el botón guarda su número
+
+function toggleMarca(k) {
+  const g = gruposVista[k];
+  if (!g) return;
+  marcasAbiertas[g.marca] = !marcasAbiertas[g.marca];
+  guardarPrefs();
+  pintarSeguimiento();
+}
+
+function plegarTodas(abrir) {
+  marcasAbiertas = {};
+  if (abrir) agruparPorMarca().forEach(function (g) { marcasAbiertas[g.marca] = true; });
+  guardarPrefs();
+  pintarSeguimiento();
+}
+
+function cambiarMarca(i) {
+  const s = seguimiento[i];
+  if (!s) return;
+  const actual = marcaDe(s) === SIN_MARCA ? '' : marcaDe(s);
+  const txt = prompt('¿De qué marca es?\n(vacío = que la deduzca sola del nombre)\n\nMarcas conocidas: ' +
+                     MARCAS.join(', '), actual);
+  if (txt === null) return;
+
+  s.marca = txt.trim();
+  pintarSeguimiento();
+  guardarCambioSeguimiento(s.id, { marca: s.marca });
+}
+
+/* Cuándo se midió por última vez. Si pasaron dos días o más se marca en rojo,
+   porque entonces el precio y el stock que ves ya no son de hoy. */
+function revisionHtml(s) {
+  if (!s.ultimaRevision) return '<span class="revision viejo">sin revisar todavía</span>';
+  const d = new Date(s.ultimaRevision);
+  if (isNaN(d.getTime())) return '';
+
+  const hoy = new Date();
+  const dias = Math.round((new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()) -
+                           new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+  const hora = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const txt = dias <= 0 ? 'hoy ' + hora : (dias === 1 ? 'ayer ' + hora : 'hace ' + dias + ' días');
+  return '<span class="revision' + (dias >= 2 ? ' viejo' : '') +
+         '" title="Última vez que se consultó la tienda">revisado ' + txt + '</span>';
+}
+
+function fichaSeguido(s, i) {
+  const v = variacion(s);
+  const pr = infoPrioridad(s.prioridad);
+
+  const precioHtml = s.precioActual != null
+    ? '<strong>' + fmtPrice(s.precioActual) + '</strong>'
+    : '<span class="list-sub">sin precio</span>';
+
+  const varHtml = (v != null && Math.abs(v) >= 1)
+    ? '<span class="delta ' + (v > 0 ? 'baja' : 'sube') + '">' +
+      (v > 0 ? '↓' : '↑') + Math.abs(Math.round(v)) + '% desde ' + fmtPrice(s.precioInicial) + '</span>'
+    : '';
+
+  const objetivoHtml = s.precioObjetivo != null
+    ? '<span class="list-target">objetivo ' + fmtPrice(s.precioObjetivo) + '</span>'
+    : '';
+
+  return '<div class="list-item" draggable="true" ondragstart="arrastrarInicio(event, ' + i + ')" ' +
+              'ondragend="arrastrarFin()" ondragover="arrastrarSobre(event)" ondragleave="arrastrarSale(event)" ' +
+              'ondrop="soltarSobreFicha(event, ' + i + ')">' +
+           '<span class="asa" title="Arrastrá para mover">⠿</span>' +
+           '<div class="list-info">' +
+             '<div class="list-name">' + escapeHtml(s.name) + '</div>' +
+             '<div class="list-sub">' + escapeHtml(s.site) + ' · ' + precioHtml + ' ' + varHtml + ' ' + objetivoHtml + '</div>' +
+             '<div class="list-sub">' + stockSeguidoHtml(s) + ' ' + cambioReciente(s) + ' ' + revisionHtml(s) + '</div>' +
+             barraRango(s) +
+           '</div>' +
+           '<div class="list-actions">' +
+             botonAvisoStock(s, i) +
+             '<button class="mini-btn prio p' + pr.valor + (s.moviendose ? ' eligiendo' : '') +
+               '" title="Prioridad ' + pr.nombre + ' — tocá para cambiarla" ' +
+               'onclick="rotarPrioridad(' + i + ')">' + pr.nombre + '</button>' +
+             '<button class="mini-btn" title="Cambiar de marca" onclick="cambiarMarca(' + i + ')">🏷</button>' +
+             '<button class="mini-btn" title="Precio objetivo" onclick="editarObjetivo(' + i + ')">🎯</button>' +
+             '<a class="mini-btn" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">Ver ↗</a>' +
+             '<button class="mini-btn danger" onclick="dejarDeSeguir(' + i + ')">✕</button>' +
+           '</div>' +
          '</div>';
 }
 
@@ -1552,50 +1730,48 @@ function pintarSeguimiento() {
     return;
   }
 
-  el.innerHTML = seguimiento.map(function (s, i) {
-    const v = variacion(s);
-    const pr = infoPrioridad(s.prioridad);
+  const grupos = gruposVista = agruparPorMarca();
+  let html = '<div class="seg-tools">' +
+               '<button class="mini-btn" onclick="plegarTodas(true)">Desplegar todas</button>' +
+               '<button class="mini-btn" onclick="plegarTodas(false)">Plegar todas</button>' +
+             '</div>';
 
-    const precioHtml = s.precioActual != null
-      ? '<strong>' + fmtPrice(s.precioActual) + '</strong>'
-      : '<span class="list-sub">sin precio</span>';
+  grupos.forEach(function (g, k) {
+    const items = g.indices.map(function (i) { return seguimiento[i]; });
+    const abierta = marcasAbiertas[g.marca] === true;
+    const altas = items.filter(function (s) { return Number(s.prioridad) === 1; }).length;
+    const agotados = items.filter(function (s) { return s.stock === 'NO'; }).length;
+    const enObjetivo = items.filter(estaEnObjetivo).length;
 
-    const varHtml = (v != null && Math.abs(v) >= 1)
-      ? '<span class="delta ' + (v > 0 ? 'baja' : 'sube') + '">' +
-        (v > 0 ? '↓' : '↑') + Math.abs(Math.round(v)) + '% desde ' + fmtPrice(s.precioInicial) + '</span>'
-      : '';
-
-    const objetivoHtml = s.precioObjetivo != null
-      ? '<span class="list-target">objetivo ' + fmtPrice(s.precioObjetivo) + '</span>'
-      : '';
-
-    return '<div class="list-item">' +
-             flechasOrden(i) +
-             '<div class="list-info">' +
-               '<div class="list-name">' + escapeHtml(s.name) + '</div>' +
-               '<div class="list-sub">' + escapeHtml(s.site) + ' · ' + precioHtml + ' ' + varHtml + ' ' + objetivoHtml + '</div>' +
-               '<div class="list-sub">' + stockSeguidoHtml(s) + ' ' + cambioReciente(s) + '</div>' +
-               barraRango(s) +
-             '</div>' +
-             '<div class="list-actions">' +
-               botonAvisoStock(s, i) +
-               '<button class="mini-btn prio p' + pr.valor + (s.moviendose ? ' eligiendo' : '') +
-                 '" title="Prioridad ' + pr.nombre + ' — tocá para cambiarla" ' +
-                 'onclick="rotarPrioridad(' + i + ')">' + pr.nombre + '</button>' +
-               '<button class="mini-btn" title="Precio objetivo" onclick="editarObjetivo(' + i + ')">🎯</button>' +
-               '<a class="mini-btn" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">Ver ↗</a>' +
-               '<button class="mini-btn danger" onclick="dejarDeSeguir(' + i + ')">✕</button>' +
-             '</div>' +
-           '</div>';
-  }).join('');
+    html += '<div class="seg-group' + (abierta ? ' abierta' : '') + '">' +
+              '<button class="seg-head" aria-expanded="' + abierta + '" onclick="toggleMarca(' + k + ')" ' +
+                'ondragover="arrastrarSobre(event)" ondragleave="arrastrarSale(event)" ' +
+                'ondrop="soltarSobreMarca(event, ' + k + ')">' +
+                '<span class="seg-flecha">' + (abierta ? '▾' : '▸') + '</span>' +
+                '<span class="seg-marca">' + escapeHtml(g.marca) + '</span>' +
+                '<span class="seg-n">' + items.length + '</span>' +
+                '<span class="seg-chips">' +
+                  (altas ? '<span class="seg-chip alta" title="Prioridad ALTA">★ ' + altas + '</span>' : '') +
+                  (enObjetivo ? '<span class="seg-chip ok" title="Llegaron a tu precio objetivo">🎯 ' + enObjetivo + '</span>' : '') +
+                  (agotados ? '<span class="seg-chip agotado" title="Sin stock">sin stock ' + agotados + '</span>' : '') +
+                '</span>' +
+              '</button>';
+    if (abierta) {
+      html += '<div class="seg-body">' + g.indices.map(function (i) {
+        return fichaSeguido(seguimiento[i], i);
+      }).join('') + '</div>';
+    }
+    html += '</div>';
+  });
 
   const west = seguimiento.filter(function (s) { return s.site === 'West Import'; });
   if (west.length) {
-    el.innerHTML += '<button class="btn wide-btn" onclick="irAlCarritoMultipleWest()">🛒 Mandar los ' +
-                    west.length + ' de West Import a su carrito</button>';
+    html += '<button class="btn wide-btn" onclick="irAlCarritoMultipleWest()">🛒 Mandar los ' +
+            west.length + ' de West Import a su carrito</button>';
   }
-  el.innerHTML += '<button class="mini-btn danger" style="margin-top:12px" ' +
-                  'onclick="vaciarSeguimientoConfirm()">Dejar de seguir todo</button>';
+  html += '<button class="mini-btn danger" style="margin-top:12px" ' +
+          'onclick="vaciarSeguimientoConfirm()">Dejar de seguir todo</button>';
+  el.innerHTML = html;
 
   renderDock();
 }
@@ -1634,16 +1810,10 @@ function rotarPrioridad(i) {
     const cambiaron = tocados.filter(function (x) { return Number(x.prioridad) !== x.prioridadOriginal; });
 
     tocados.forEach(function (x) { delete x.moviendose; delete x.prioridadOriginal; });
-    // El que cambió de prioridad entra al final de su grupo nuevo. Si diste la
-    // vuelta completa y volviste a la misma, se queda donde estaba.
-    cambiaron.forEach(function (x) { x.orden = Infinity; });
-
     ordenarSeguimiento();
-    renumerarSeguimiento();
     pintarSeguimiento();
 
     cambiaron.forEach(function (x) { guardarCambioSeguimiento(x.id, { prioridad: x.prioridad }); });
-    if (cambiaron.length) guardarOrdenDiferido();
   }, ESPERA_REORDENAR);
 }
 

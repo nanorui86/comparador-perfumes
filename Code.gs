@@ -367,7 +367,7 @@ function obtenerSheet_() {
 const COLUMNAS_SEGUIMIENTO = ['ID', 'Nombre', 'Sitio', 'URL', 'Precio inicial', 'Precio actual',
                               'Precio objetivo', 'Prioridad', 'Fecha agregado', 'Última revisión',
                               'Última alerta', 'Precio anterior', 'Precio mínimo', 'Precio máximo',
-                              'Stock', 'Sin stock desde', 'Avisar si vuelve', 'Orden'];
+                              'Stock', 'Sin stock desde', 'Avisar si vuelve', 'Orden', 'Marca'];
 
 /**
  * Las columnas se fueron agregando con el tiempo. Si la planilla es de antes, se
@@ -453,6 +453,7 @@ function migrarCarritoASeguimiento_(ss, segSheet) {
       precio,               // Precio máximo
       '', '', '',           // Stock, Sin stock desde, Avisar si vuelve
       filas.length,         // Orden: el mismo en que estaban en el carrito
+      '',                   // Marca: la deduce la pantalla o la completa la revisión
     ]);
   }
 
@@ -900,6 +901,17 @@ function refrescarPrecios_(esRevisionDiaria) {
   const seguidos = listarSeguimiento();
   if (seguidos.length === 0) return salida;
 
+  // Apps Script corta todo a los 6 minutos y, si eso pasa, no se escribe NADA de
+  // lo medido: el stock quedaba viejo y el mail de "volvió" nunca salía. Por eso
+  // se empieza por los que hace más que no se miran, y si el tiempo se acaba se
+  // dejan los demás para la próxima vuelta en vez de perderlo todo.
+  const inicio = Date.now();
+  const presupuesto = 240000;   // 4 minutos para consultar; el resto es para escribir
+  seguidos.sort(function (a, b) {
+    return (a.ultimaRevision || '').localeCompare(b.ultimaRevision || '');
+  });
+  let sinRevisar = 0;
+
   const sheet = obtenerSheet_().getSheetByName('Seguimiento');
   const filas = sheet.getDataRange().getValues();
   const ahora = new Date();
@@ -911,6 +923,7 @@ function refrescarPrecios_(esRevisionDiaria) {
   seguidos.forEach(function (seg) {
     const site = sitioPorNombre_(seg.site);
     if (!site) return;
+    if (Date.now() - inicio > presupuesto) { sinRevisar++; return; }
 
     const consulta = consultaDeSeguimiento_(seg.name);
     const clave = site.id + '|' + consulta;
@@ -972,6 +985,9 @@ function refrescarPrecios_(esRevisionDiaria) {
         nueva[13] = seg.precioMax == null ? precioHoy : Math.max(seg.precioMax, precioHoy);
       }
 
+      // La marca que publica la tienda (Pedix la trae) completa la que falte.
+      if (!seg.marca && match.marca) nueva[18] = match.marca;
+
       // Si hoy no se sabe, no se toca: "no se sabe" no borra un "sin stock" anterior.
       if (stockHoy) {
         nueva[14] = stockHoy;
@@ -1030,6 +1046,7 @@ function refrescarPrecios_(esRevisionDiaria) {
   });
 
   anotarHistorial_(paraHistorial);
+  if (sinRevisar) console.warn('Seguimiento: se acabó el tiempo y ' + sinRevisar + ' producto(s) quedan para la próxima revisión.');
   return salida;
 }
 
@@ -1273,7 +1290,7 @@ function filaASeguido_(fila) {
     precioActual:   fila[5] === '' ? null : Number(fila[5]),
     precioObjetivo: fila[6] === '' ? null : Number(fila[6]),
     prioridad:      Number(fila[7]) || PRIORIDAD_NORMAL,
-    ultimaRevision: fila[9] ? String(fila[9]) : null,
+    ultimaRevision: fechaISO_(fila[9]),
     precioAnterior: fila[11] === '' || fila[11] == null ? null : Number(fila[11]),
     precioMin:      fila[12] === '' || fila[12] == null ? null : Number(fila[12]),
     precioMax:      fila[13] === '' || fila[13] == null ? null : Number(fila[13]),
@@ -1281,6 +1298,7 @@ function filaASeguido_(fila) {
     sinStockDesde:  fechaISO_(fila[15]),
     avisarStock:    fila[16] === 'SI',
     orden:          fila[17] === '' || fila[17] == null ? null : Number(fila[17]),
+    marca:          fila[18] ? String(fila[18]) : '',
   };
 }
 
@@ -1294,24 +1312,21 @@ function listarSeguimiento() {
     salida.push(filaASeguido_(data[i]));
   }
 
-  // Primero la prioridad y, dentro de cada una, el orden que elegiste a mano.
-  // Antes el segundo criterio era "lo que más bajó", pero con eso los productos
-  // se reacomodaban solos cada mañana según cómo se movían los precios.
+  // El orden es el que armaste arrastrando las fichas (columna Orden); los que
+  // todavía no tienen, por nombre. La prioridad ya no mueve nada de lugar.
   salida.sort(function (a, b) {
-    if (a.prioridad !== b.prioridad) return a.prioridad - b.prioridad;
     const oa = a.orden == null ? Infinity : a.orden;
     const ob = b.orden == null ? Infinity : b.orden;
     if (oa !== ob) return oa - ob;
-    return bajaPorcentual_(b) - bajaPorcentual_(a);   // solo para empates raros
+    return String(a.name).localeCompare(String(b.name), 'es');
   });
   return salida;
 }
 
 /**
  * Guarda el orden de la lista tal como quedó en pantalla: `ids` en el orden en
- * que se ven. Cada uno toma su posición en la lista entera, lo que conserva el
- * orden dentro de cada prioridad. Una lectura y una escritura, sea cual sea el
- * largo de la lista.
+ * que se ven. Cada uno toma su posición en la lista entera. Una lectura y una
+ * escritura, sea cual sea el largo de la lista.
  */
 function reordenarSeguimiento(ids) {
   const sheet = obtenerSheet_().getSheetByName('Seguimiento');
@@ -1327,12 +1342,6 @@ function reordenarSeguimiento(ids) {
     return [posicion[f[0]] !== undefined ? posicion[f[0]] : columnaOrden[i][0]];
   });
   sheet.getRange(2, 18, nueva.length, 1).setValues(nueva);
-}
-
-/** Cuánto bajó desde que lo empezaste a seguir, en por ciento. 0 si no se puede saber. */
-function bajaPorcentual_(seguido) {
-  if (!seguido.precioInicial || seguido.precioActual == null) return 0;
-  return (1 - seguido.precioActual / seguido.precioInicial) * 100;
 }
 
 /**
@@ -1367,6 +1376,7 @@ function agregarASeguimiento(item) {
     item.inStock === false ? new Date() : '',   // sin stock desde
     '',                                         // avisar si vuelve: lo prendés vos
     ultimoOrden + 1,                            // entra al final de su prioridad
+    item.marca || '',                           // marca, si la tienda la publica
   ]);
   return listarSeguimiento();
 }
@@ -1412,6 +1422,9 @@ function actualizarSeguimiento(id, campos) {
     }
     if (campos && campos.avisarStock !== undefined) {
       sheet.getRange(fila, 17).setValue(campos.avisarStock ? 'SI' : '');
+    }
+    if (campos && campos.marca !== undefined) {
+      sheet.getRange(fila, 19).setValue(String(campos.marca || '').trim());
     }
     return;
   }
@@ -1815,6 +1828,7 @@ function scrapePedix_(site, query) {
     const productId = idMatch ? idMatch[1] : null;
 
     const priceMatch = block.match(/"price":(\d+(?:\.\d+)?)/);
+    const marcaMatch = block.match(/"groupName":"([^"]*)"/);   // en Pedix el grupo es la marca
     const stockMatch = block.match(/"stockQty":(\d+)/);
     const activeMatch = block.match(/"active":(true|false)/);
 
@@ -1843,6 +1857,7 @@ function scrapePedix_(site, query) {
       price: priceMatch ? Number(priceMatch[1]) : null,
       inStock: inStock,
       url: url,
+      marca: marcaMatch ? marcaMatch[1].trim() : '',
     });
   });
 
