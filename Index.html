@@ -1480,7 +1480,16 @@ function toggleAvisoStock(i) {
 }
 
 function renderSeguimiento(data) {
-  seguimiento = data || [];
+  const nuevo = data || [];
+  if (ordenPendiente) {
+    // Hay un orden arrastrado que todavía no llegó al servidor: la lista que vuelve
+    // trae el orden viejo, así que se le aplica el de la pantalla. Lo que no estaba
+    // (una ficha recién agregada) va al final.
+    const lugar = {};
+    seguimiento.forEach(function (x, k) { lugar[x.id] = k; });
+    nuevo.forEach(function (x) { x.orden = lugar[x.id] !== undefined ? lugar[x.id] : 1e9; });
+  }
+  seguimiento = nuevo;
   ordenarSeguimiento();
   pintarSeguimiento();
 }
@@ -1504,6 +1513,8 @@ function ordenarSeguimiento() {
 let arrastrando = null;       // índice en `seguimiento` de la ficha que se está llevando
 const ESPERA_GUARDAR_ORDEN = 1200;
 let temporizadorOrden = null;
+let ordenPendiente = false;   // hay un orden arrastrado que el servidor todavía no confirmó
+let versionOrden = 0;         // para saber si la confirmación que llega es la última
 
 function arrastrarInicio(ev, i) {
   arrastrando = i;
@@ -1544,7 +1555,9 @@ function moverFicha(desde, antesDe, marca) {
   seguimiento.forEach(function (x, k) { x.orden = k; });
 
   if (cambiaMarca) {
-    s.marca = marca === SIN_MARCA ? '' : marca;
+    // "Sin marca" elegida a mano se guarda tal cual: con la marca vacía se la
+    // volvería a deducir del nombre y la ficha no se movería de grupo.
+    s.marca = marca;
     marcasAbiertas[marca] = true;   // que se vea dónde quedó
     guardarPrefs();
     guardarCambioSeguimiento(s.id, { marca: s.marca });
@@ -1573,10 +1586,16 @@ function soltarSobreMarca(ev, k) {
 // Si movés varias fichas seguidas, se guarda una sola vez al final.
 function guardarOrdenDiferido() {
   clearTimeout(temporizadorOrden);
+  ordenPendiente = true;
+  const version = ++versionOrden;
   temporizadorOrden = setTimeout(function () {
     const ids = seguimiento.map(function (s) { return s.id; });
     google.script.run
+      .withSuccessHandler(function () {
+        if (version === versionOrden) ordenPendiente = false;
+      })
       .withFailureHandler(function () {
+        ordenPendiente = false;
         alert('No pude guardar el orden. Vuelvo a cargar la lista.');
         cargarSeguimiento();
       })
