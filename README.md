@@ -119,8 +119,9 @@ precio que aparece y desaparece entre revisiones no queda registrado.
 Los productos seguidos se agrupan por marca en secciones plegables (se recuerda cuáles quedaron
 abiertas). El título de cada una resume cuántos hay, cuántos son ALTA, cuántos llegaron a su
 objetivo y cuántos están sin stock. La marca sale, en este orden, de lo que se le puso a mano
-(botón 🏷), de lo que publica la tienda (Pedix la trae como `groupName`) o de buscarla en el nombre
-entre `MARCAS_CONOCIDAS`; si nada coincide va a "Sin marca".
+(botón 🏷), de lo que publica la tienda (Pedix la trae como `groupName`, y solo se acepta si es una de
+`MARCAS_CONOCIDAS`, porque a veces el grupo es una categoría) o de buscarla en el nombre entre esas mismas;
+si nada coincide va a "Sin marca". Escribir "LATTAFA" o "Lattafa Perfumes" cae en la sección "Lattafa".
 
 Las fichas se mueven arrastrándolas con el mouse (manija ⠿): soltadas sobre otra ficha quedan justo
 antes; sobre el título de una marca, van al final de esa marca y, si era otra, cambian de marca.

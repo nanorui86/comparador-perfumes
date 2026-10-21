@@ -986,7 +986,21 @@ function refrescarPrecios_(esRevisionDiaria) {
     const precioHoy = precioEfectivo_(match);
     const stockHoy = match.inStock === true ? 'SI' : (match.inStock === false ? 'NO' : '');
 
-    const fila = indiceDeFila_(filas, seg.id);
+    let fila = indiceDeFila_(filas, seg.id);
+    let rango = null;
+    if (fila > 0) {
+      // La fila se vuelve a leer justo antes de escribir: esta revisión puede durar
+      // minutos, y si en el medio arrastraste una ficha, cambiaste una marca o el
+      // objetivo, escribir la foto del principio lo deshacía. Si la fila ya no es
+      // esa (se borró o se movió algo), no se escribe nada.
+      rango = sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length);
+      const actual = completarFila_(rango.getValues()[0]);
+      if (actual[0] !== seg.id) {
+        fila = -1;
+      } else {
+        filas[fila] = actual;
+      }
+    }
     if (fila > 0) {
       // Una sola escritura con toda la fila en vez de varias sueltas: con muchos
       // productos seguidos, cada llamada a la planilla se nota.
@@ -1004,16 +1018,16 @@ function refrescarPrecios_(esRevisionDiaria) {
       }
 
       // La marca que publica la tienda (Pedix la trae) completa la que falte.
-      if (!seg.marca && match.marca) nueva[18] = match.marca;
+      if (!nueva[18] && match.marca) nueva[18] = match.marca;
 
       // Si hoy no se sabe, no se toca: "no se sabe" no borra un "sin stock" anterior.
       if (stockHoy) {
         nueva[14] = stockHoy;
-        if (stockHoy === 'NO' && !seg.sinStockDesde) nueva[15] = ahora;   // desde cuándo
+        if (stockHoy === 'NO' && !nueva[15]) nueva[15] = ahora;   // desde cuándo
         if (stockHoy === 'SI') nueva[15] = '';
       }
 
-      sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([nueva]);
+      rango.setValues([nueva]);
       filas[fila] = nueva;   // para que las marcas de alerta de más abajo no pisen esto
     }
     if (!esRevisionDiaria) return;
@@ -1393,7 +1407,7 @@ function agregarASeguimiento(item) {
     item.inStock === true ? 'SI' : (item.inStock === false ? 'NO' : ''),
     item.inStock === false ? new Date() : '',   // sin stock desde
     '',                                         // avisar si vuelve: lo prendés vos
-    ultimoOrden + 1,                            // entra al final de su prioridad
+    ultimoOrden + 1,                            // entra al final de la lista
     item.marca || '',                           // marca, si la tienda la publica
   ]);
   return listarSeguimiento();
@@ -1875,11 +1889,30 @@ function scrapePedix_(site, query) {
       price: priceMatch ? Number(priceMatch[1]) : null,
       inStock: inStock,
       url: url,
-      marca: marcaMatch ? marcaMatch[1].trim() : '',
+      marca: marcaMatch ? marcaConocida_(marcaMatch[1]) : '',
     });
   });
 
   return items;
+}
+
+/**
+ * La marca de la lista de marcas que aparece en el texto, o '' si no hay ninguna.
+ * En Pedix el groupName a veces es la marca y a veces una categoría ("Unisex",
+ * "Decants"); solo se acepta si es una marca que conocemos, para no llenar la
+ * lista de "marcas" que no lo son. Las que falten se suman a MARCAS_CONOCIDAS.
+ */
+function marcaConocida_(texto) {
+  const limpiar = function (t) {
+    return ' ' + String(t == null ? '' : t).toLowerCase().normalize('NFD')
+      .replace(RE_ACENTOS_, '').replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+  };
+  const buscado = limpiar(texto);
+  let mejor = '';
+  MARCAS_CONOCIDAS.forEach(function (m) {
+    if (buscado.indexOf(limpiar(m)) !== -1 && m.length > mejor.length) mejor = m;
+  });
+  return mejor;
 }
 
 // Busca en el HTML todas las categorías cuyo título contenga "decant" (sin importar mayúsculas/acentos)

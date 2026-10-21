@@ -641,7 +641,7 @@
     <div class="help-item">
       <h4>★ Prioridad</h4>
       <p><strong>Por marca.</strong> Los productos que seguís están agrupados por marca en secciones que se pliegan y se despliegan (se acuerda cuáles dejaste abiertas). En cada título ves cuántos hay y, si corresponde, cuántos son prioridad ALTA (★), cuántos llegaron a tu objetivo (🎯) y cuántos están sin stock. La marca sale sola del nombre o de lo que publica la tienda; si un producto cae en "Sin marca", tocá 🏷 para ponérsela. <strong>Para moverlas</strong>, agarrá una ficha con el mouse (la manija ⠿ de la izquierda) y soltala sobre otra ficha: queda justo antes. Si la soltás sobre el título de una marca, pasa al final de esa marca, y si es de otra marca, se cambia de marca. El orden queda guardado. La prioridad no mueve nada de lugar.</p>
-      <p>Cada producto seguido tiene una prioridad: tocá el botón para rotar entre ALTA, MEDIA y BAJA. La lista no se reacomoda mientras elegís — espera un par de segundos a que dejes de tocar, así el que pasa por BAJA no se te escapa al fondo cuando ibas a ALTA. Los de prioridad ALTA aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en ALTA, la barra no aparece.</p>
+      <p>Cada producto seguido tiene una prioridad: tocá el botón para rotar entre ALTA, MEDIA y BAJA. El cambio se guarda un par de segundos después de que dejes de tocar, y el producto se queda en su lugar: la prioridad no mueve nada. Los de prioridad ALTA aparecen en la barra que queda colgada abajo a la derecha, siempre a la vista, con su precio de hoy. Es tu lista corta de "esto es lo que quiero comprar". Si no hay ninguno en ALTA, la barra no aparece.</p>
     </div>
   </div>
 
@@ -1610,35 +1610,57 @@ let marcasAbiertas = {};      // marca -> true; se recuerda entre visitas
 
 function sinAcentos(t) {
   const s = String(t == null ? '' : t).toLowerCase();
-  return s.normalize ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s;
+  return s.normalize ? s.normalize('NFD').replace(RE_DIACRITICOS, '') : s;
 }
 
 /* La marca de un producto: la que le pusiste o la que publica la tienda y, si no
    hay ninguna, la que aparezca escrita en el nombre. Si tampoco, "Sin marca". */
 function marcaDe(s) {
-  if (s.marca) return s.marca;
-  const nombre = ' ' + sinAcentos(s.name).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  if (s.marca) return marcaCanonica(s.marca);
+  return marcaConocidaEn(s.name) || SIN_MARCA;
+}
+
+/* El texto sin acentos, mayúsculas ni signos, con un espacio a cada lado para
+   buscar palabras enteras. */
+function claveMarca(t) {
+  return ' ' + sinAcentos(t).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+}
+
+/* La más larga de las marcas conocidas que aparece escrita en el texto, o ''. */
+function marcaConocidaEn(texto) {
+  const buscado = claveMarca(texto);
   let mejor = '';
   MARCAS.forEach(function (m) {
-    const clave = ' ' + sinAcentos(m).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
-    if (nombre.indexOf(clave) !== -1 && m.length > mejor.length) mejor = m;
+    if (buscado.indexOf(claveMarca(m)) !== -1 && m.length > mejor.length) mejor = m;
   });
-  return mejor || SIN_MARCA;
+  return mejor;
+}
+
+/* Lo que se escribió a mano o publica la tienda ("LATTAFA", "lattafa ",
+   "Lattafa Perfumes") se lleva al nombre de la marca conocida, para que no
+   queden secciones repetidas. Si no es conocida se deja como está. */
+function marcaCanonica(m) {
+  const t = String(m).trim().replace(/\s+/g, ' ');
+  if (claveMarca(t) === claveMarca(SIN_MARCA)) return SIN_MARCA;
+  return marcaConocidaEn(t) || t;
 }
 
 /* Las marcas en orden alfabético, "Sin marca" al final, cada una con los índices
    de sus productos en `seguimiento` (los botones de cada ficha usan ese índice). */
 function agruparPorMarca() {
+  // Las marcas desconocidas que solo difieren en mayúsculas o acentos van juntas,
+  // con el nombre de la primera que apareció.
   const mapa = {};
   seguimiento.forEach(function (s, i) {
     const m = marcaDe(s);
-    (mapa[m] = mapa[m] || []).push(i);
+    const clave = claveMarca(m);
+    (mapa[clave] = mapa[clave] || { marca: m, indices: [] }).indices.push(i);
   });
-  return Object.keys(mapa).sort(function (a, b) {
-    if (a === SIN_MARCA) return 1;
-    if (b === SIN_MARCA) return -1;
-    return a.localeCompare(b, 'es');
-  }).map(function (m) { return { marca: m, indices: mapa[m] }; });
+  return Object.keys(mapa).map(function (k) { return mapa[k]; }).sort(function (a, b) {
+    if (a.marca === SIN_MARCA) return 1;
+    if (b.marca === SIN_MARCA) return -1;
+    return a.marca.localeCompare(b.marca, 'es');
+  });
 }
 
 function estaEnObjetivo(s) {
@@ -1671,6 +1693,8 @@ function cambiarMarca(i) {
   if (txt === null) return;
 
   s.marca = txt.trim();
+  marcasAbiertas[marcaDe(s)] = true;   // que se vea dónde quedó
+  guardarPrefs();
   pintarSeguimiento();
   guardarCambioSeguimiento(s.id, { marca: s.marca });
 }
@@ -1815,12 +1839,12 @@ function rotarPrioridad(i) {
   // cada toque pareciera que la página se colgaba.
   if (!s.moviendose) s.prioridadOriginal = Number(s.prioridad);
   s.prioridad = Number(s.prioridad) >= 3 ? 1 : Number(s.prioridad) + 1;
-  s.moviendose = true;          // se queda en su lugar mientras elegís
+  s.moviendose = true;
   pintarSeguimiento();
 
-  // El reordenado y el guardado esperan a que dejes de tocar. Si seguís rotando,
-  // el reloj se reinicia y recién al final se acomoda la lista y se guarda una
-  // sola vez, en vez de tres.
+  // El guardado espera a que dejes de tocar. Si seguís rotando, el reloj se
+  // reinicia y recién al final se guarda una sola vez, en vez de tres. La lista
+  // no cambia de orden: la prioridad no mueve nada de lugar.
   clearTimeout(temporizadorPrioridad);
   temporizadorPrioridad = setTimeout(function () {
     // Se guardan TODOS los que se tocaron, no solo el último: antes, si rotabas
@@ -1829,7 +1853,6 @@ function rotarPrioridad(i) {
     const cambiaron = tocados.filter(function (x) { return Number(x.prioridad) !== x.prioridadOriginal; });
 
     tocados.forEach(function (x) { delete x.moviendose; delete x.prioridadOriginal; });
-    ordenarSeguimiento();
     pintarSeguimiento();
 
     cambiaron.forEach(function (x) { guardarCambioSeguimiento(x.id, { prioridad: x.prioridad }); });
