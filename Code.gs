@@ -904,10 +904,18 @@ function refrescarPrecios_(esRevisionDiaria) {
   // Apps Script corta todo a los 6 minutos y, si eso pasa, no se escribe NADA de
   // lo medido: el stock quedaba viejo y el mail de "volvió" nunca salía. Por eso
   // se empieza por los que hace más que no se miran, y si el tiempo se acaba se
-  // dejan los demás para la próxima vuelta en vez de perderlo todo.
+  // dejan los demás para la próxima vuelta en vez de perderlo todo. El tiempo se
+  // reparte: 3 minutos para buscar, hasta el minuto 4,5 para confirmar stock en
+  // las fichas, y lo que queda (más de un minuto) para escribir.
   const inicio = Date.now();
-  const presupuesto = 240000;   // 4 minutos para consultar; el resto es para escribir
+  const presupuesto = 180000;
+  const limiteVerificacion = 270000;
+  // Primero las prioridades altas (1 = ALTA) y, dentro de cada una, las que hace
+  // más que no se miran. Así, si el tiempo se acaba, lo que queda sin medir es lo
+  // de BAJA, y el mail sale ordenado por prioridad.
   seguidos.sort(function (a, b) {
+    const pa = a.prioridad || PRIORIDAD_NORMAL, pb = b.prioridad || PRIORIDAD_NORMAL;
+    if (pa !== pb) return pa - pb;
     return (a.ultimaRevision || '').localeCompare(b.ultimaRevision || '');
   });
   let sinRevisar = 0;
@@ -923,12 +931,14 @@ function refrescarPrecios_(esRevisionDiaria) {
   seguidos.forEach(function (seg) {
     const site = sitioPorNombre_(seg.site);
     if (!site) return;
-    if (Date.now() - inicio > presupuesto) { sinRevisar++; return; }
 
     const consulta = consultaDeSeguimiento_(seg.name);
     const clave = site.id + '|' + consulta;
 
     if (cache[clave] === undefined) {
+      // El tope solo frena las consultas nuevas: si la búsqueda ya está en la
+      // caché, medir este producto no cuesta nada.
+      if (Date.now() - inicio > presupuesto) { sinRevisar++; return; }
       try {
         cache[clave] = buscarEnSitio_(site, consulta);
       } catch (err) {
@@ -952,13 +962,21 @@ function refrescarPrecios_(esRevisionDiaria) {
     .map(function (m) { return { url: m.seg.url, site: m.seg.site }; });
 
   const confirmado = {};
+  const sinTiempo = {};   // sin confirmar por falta de tiempo: hoy no se sabe
   for (let i = 0; i < aVerificar.length; i += 20) {   // verificarStockLote atiende de a 20
-    const lote = verificarStockLote(aVerificar.slice(i, i + 20));
+    const grupo = aVerificar.slice(i, i + 20);
+    if (Date.now() - inicio > limiteVerificacion) {
+      grupo.forEach(function (p) { sinTiempo[p.url] = true; });
+      continue;
+    }
+    const lote = verificarStockLote(grupo);
     Object.keys(lote).forEach(function (url) { confirmado[url] = lote[url]; });
   }
   medidos.forEach(function (m) {
     const v = confirmado[m.seg.url];
     if (v === true || v === false) m.match.inStock = v;
+    // Un cartel del listado sin confirmar no alcanza para un mail de "volvió".
+    else if (sinTiempo[m.seg.url]) m.match.inStock = null;
   });
 
   // 3) Escribir lo medido y armar los avisos.
