@@ -34,11 +34,14 @@ las conversaciones no lo son.
 
 ## Pendiente
 
-1. **West Import:** sus descuentos (Cyber Monday desde el 2/11/2026, efectivo y transferencia,
-   listas mayoristas) los aplica un script del carrito y no se pueden leer. Hoy se muestra su
-   precio de lista. Falta decidir qué porcentaje real corresponde y cargarlo con
-   `descuentoTransferencia` en `SITES`.
-2. **Desplegar** esta versión en Apps Script y ejecutar `probarMail()` una vez para confirmar que
+1. **West Import (decidido el 30/10/2026: se deja como está y se rechequea pasado el Cyber
+   Monday).** Sus descuentos (Cyber Monday desde el 2/11/2026, efectivo y transferencia, listas
+   mayoristas) no están en ningún dato de la página. También se probó el carrito de prueba de
+   Shopify (`/cart/add.js` + `/cart.js`): devuelve el precio de lista sin descuento, así que
+   tampoco sirve para averiguarlo. Hoy se muestra su precio de lista. Si hay que reflejarlo, se
+   carga a mano con `descuentoTransferencia` en `SITES` una vez confirmado el porcentaje real
+   (se confirma mirando el pago en la web, no en el código).
+2. ~~Desplegar~~ hecho el 30/10/2026. Falta ejecutar `probarMail()` una vez para confirmar que
    el correo llega.
 3. Mirar en **Ejecuciones** si `revisarFavoritosYAlertar` corre cada día; si no, ejecutar
    `activarRevisionDiaria()`.
