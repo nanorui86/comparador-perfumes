@@ -41,10 +41,11 @@ las conversaciones no lo son.
    tampoco sirve para averiguarlo. Hoy se muestra su precio de lista. Si hay que reflejarlo, se
    carga a mano con `descuentoTransferencia` en `SITES` una vez confirmado el porcentaje real
    (se confirma mirando el pago en la web, no en el código).
-2. ~~Desplegar~~ hecho el 30/10/2026. Falta ejecutar `probarMail()` una vez para confirmar que
-   el correo llega.
-3. Mirar en **Ejecuciones** si `revisarFavoritosYAlertar` corre cada día; si no, ejecutar
-   `activarRevisionDiaria()`.
+2. ~~Desplegar~~ y ~~`probarMail()`~~: hechos el 30/10/2026 (el mail de prueba llegó).
+3. **Lunes 2/11/2026:** mirar en **Ejecuciones** si `revisarFavoritosYAlertar` corrió el fin de
+   semana y a las 9 de ese día; si no hay ninguna corrida, ejecutar `activarRevisionDiaria()` una
+   vez y revisar **Activadores**. Ese mismo día arranca el Cyber Monday: aprovechar para mirar el
+   descuento real de West Import en su pago (ver punto 1).
 4. Después de desplegar, los productos de Idalium ya seguidos pueden mostrar una "baja" de golpe:
    es la corrección del precio, no una baja real.
 5. Rincón Perfumado (WooCommerce) era la próxima candidata a compra directa al carrito.
