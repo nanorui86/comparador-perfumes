@@ -339,6 +339,7 @@
   .amount.none { font-size: 13px; font-weight: 500; color: var(--muted); }
   .children .amount { font-size: 15px; }
   .transfer { font-size: 11px; color: var(--ok); margin-top: 1px; font-variant-numeric: tabular-nums; }
+  .was { font-size: 11px; color: var(--faint); margin-top: 1px; font-variant-numeric: tabular-nums; }
 
   .actions { grid-area: actions; display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
   .icon-btn {
@@ -734,7 +735,23 @@ const SITIOS_FALLBACK = [
 const PREFS_KEY = 'comparador-perfumes-prefs';
 
 let SITIOS = SITIOS_FALLBACK;
-let MARCAS = MARCAS_FALLBACK;
+/* Las marcas llegan del backend (listarConfig). La última lista recibida se guarda
+   en el navegador y se usa de arranque; MARCAS_FALLBACK solo cubre la primera vez
+   que se abre, así que ya no hace falta mantenerla igual a mano. */
+const MARCAS_KEY = 'comparador-perfumes-marcas';
+
+function leerMarcasGuardadas() {
+  try {
+    const m = JSON.parse(localStorage.getItem(MARCAS_KEY));
+    return Array.isArray(m) && m.length ? m : null;
+  } catch (e) { return null; }
+}
+
+function guardarMarcas(marcas) {
+  try { localStorage.setItem(MARCAS_KEY, JSON.stringify(marcas)); } catch (e) { /* sin almacenamiento: no pasa nada */ }
+}
+
+let MARCAS = leerMarcasGuardadas() || MARCAS_FALLBACK;
 let ultimosResultados = [];   // lo que devolvió el backend
 let ultimosErrores = [];      // tiendas que no respondieron
 let verificandoStock = false;
@@ -1169,8 +1186,14 @@ function chipTienda(etiqueta, cantidad, activo, valor) {
 }
 
 function filaHtml(r, idx, rank, esMejor, extraMeta) {
+  // El precio de lista tachado, cuando la tienda lo publica y es mayor al de venta
+  const listaHtml = (r.priceLista != null && r.price != null && r.priceLista > r.price)
+    ? '<div class="was"><s>' + fmtPrice(r.priceLista) + '</s> −' +
+      Math.round((1 - r.price / r.priceLista) * 100) + '%</div>'
+    : '';
+
   const precioHtml = r.price != null
-    ? '<div class="amount">' + fmtPrice(r.price) + '</div>' +
+    ? '<div class="amount">' + fmtPrice(r.price) + '</div>' + listaHtml +
       (r.priceTransferencia != null
         ? '<div class="transfer">' + fmtPrice(r.priceTransferencia) + ' transf. −' + r.pctTransferencia + '%</div>'
         : '')
@@ -1626,12 +1649,26 @@ function claveMarca(t) {
   return ' ' + sinAcentos(t).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 }
 
+/* Las claves de las marcas conocidas se calculan una vez y se rehacen solo si
+   cambia la lista: marcaDe corre por cada ficha en cada repintado (cada arrastre,
+   cada toque de prioridad) y antes normalizaba todas las marcas cada vez. */
+let clavesMarcas = [];
+let clavesMarcasDe = null;
+
+function clavesDeMarcas() {
+  if (clavesMarcasDe !== MARCAS) {
+    clavesMarcas = MARCAS.map(function (m) { return { marca: m, clave: claveMarca(m) }; });
+    clavesMarcasDe = MARCAS;
+  }
+  return clavesMarcas;
+}
+
 /* La más larga de las marcas conocidas que aparece escrita en el texto, o ''. */
 function marcaConocidaEn(texto) {
   const buscado = claveMarca(texto);
   let mejor = '';
-  MARCAS.forEach(function (m) {
-    if (buscado.indexOf(claveMarca(m)) !== -1 && m.length > mejor.length) mejor = m;
+  clavesDeMarcas().forEach(function (c) {
+    if (buscado.indexOf(c.clave) !== -1 && c.marca.length > mejor.length) mejor = c.marca;
   });
   return mejor;
 }
@@ -2018,6 +2055,7 @@ function cargarConfig() {
       renderSitios(cfg.sitios);
       if (cfg.marcas && cfg.marcas.length) {
         MARCAS = cfg.marcas;
+        guardarMarcas(MARCAS);
         RUIDO = construirRuido();   // las marcas también son ruido al agrupar
         renderChips();
       }

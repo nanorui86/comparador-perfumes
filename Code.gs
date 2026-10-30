@@ -750,18 +750,80 @@ function resumirPorMes_(filas) {
  * productos que estás siguiendo.
  */
 function revisarFavoritosYAlertar() {
-  const seguimiento = revisarSeguimiento_();
-  const favoritos = revisarFavoritos_();
+  // Si por cualquier motivo hay dos corridas a la vez (un disparador duplicado, una
+  // corrida que se alargó), la segunda se corta: las dos mandarían el mismo mail.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    console.warn('Ya hay una revisión en curso: esta se saltea.');
+    return;
+  }
+  try {
+    revisionDiaria_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Tiempo máximo para revisar las búsquedas guardadas, contado desde que arranca la
+// corrida. Apps Script corta a los 6 minutos y hace falta margen para mandar el mail.
+const LIMITE_REVISION_MS = 320000;
+
+/**
+ * Lo importante de este orden: los avisos se MANDAN primero y recién después se
+ * anota que ya se mandaron (`confirmarAvisos_`). Antes se anotaba durante la
+ * revisión; si el mail fallaba, o el script se cortaba por tiempo, el aviso quedaba
+ * "ya enviado" sin haber salido y no volvía a avisarse nunca.
+ */
+function revisionDiaria_() {
+  const inicio = Date.now();
+  const problemas = [];
+
+  let seguimiento = { precios: [], stock: [], sinRevisar: 0 };
+  try {
+    seguimiento = revisarSeguimiento_();
+  } catch (err) {
+    console.error('Revisión de Siguiendo: ' + err.message);
+    problemas.push('No pude revisar los productos que seguís (' + err.message + ').');
+  }
+  if (seguimiento.sinRevisar) {
+    problemas.push('Se acabó el tiempo y ' + seguimiento.sinRevisar +
+                   (seguimiento.sinRevisar === 1 ? ' producto seguido quedó' : ' productos seguidos quedaron') +
+                   ' sin revisar; los mira la próxima vez.');
+  }
+
+  let favoritos = { ofertas: [], apariciones: [], sinRevisar: 0, fallas: [] };
+  try {
+    favoritos = revisarFavoritos_(inicio + LIMITE_REVISION_MS);
+  } catch (err) {
+    console.error('Revisión de la vigilancia: ' + err.message);
+    problemas.push('No pude revisar la vigilancia de precios (' + err.message + ').');
+  }
+  favoritos.fallas.forEach(function (f) { problemas.push('Vigilancia "' + f + '.'); });
+  if (favoritos.sinRevisar) {
+    problemas.push('Se acabó el tiempo y ' + favoritos.sinRevisar +
+                   (favoritos.sinRevisar === 1 ? ' búsqueda guardada quedó' : ' búsquedas guardadas quedaron') +
+                   ' sin revisar; las mira la próxima vez.');
+  }
+
   const alertas = {
     busquedas:   favoritos.ofertas,
     apariciones: favoritos.apariciones,
     productos:   seguimiento.precios,
     stock:       seguimiento.stock,
+    problemas:   problemas,
   };
 
+  let errorMail = null;
   if (alertas.busquedas.length || alertas.apariciones.length ||
-      alertas.productos.length || alertas.stock.length) {
-    enviarEmailAlertas_(alertas);
+      alertas.productos.length || alertas.stock.length || problemas.length) {
+    try {
+      enviarEmailAlertas_(alertas);
+      confirmarAvisos_(alertas);   // solo si el mail salió
+    } catch (err) {
+      // Nada quedó anotado como avisado: mañana se vuelve a intentar.
+      console.error('No se pudo mandar el mail: ' + err.message);
+      errorMail = err;
+    }
   }
 
   // Va al final y aislado: si el mantenimiento falla, los avisos ya salieron.
@@ -770,81 +832,135 @@ function revisarFavoritosYAlertar() {
   } catch (err) {
     console.error('Mantenimiento del historial: ' + err.message);
   }
+
+  if (errorMail) throw errorMail;   // que figure como error en Ejecuciones
 }
 
-function revisarFavoritos_() {
+/**
+ * Anota que los avisos ya salieron, y solo los que salieron. Es idempotente: si se
+ * corta a la mitad, lo que falte se vuelve a avisar mañana en vez de perderse.
+ */
+function confirmarAvisos_(alertas) {
+  const stock = alertas.stock || [];
+  const productos = alertas.productos || [];
+
+  if (stock.length || productos.length) {
+    const sheet = obtenerSheet_().getSheetByName('Seguimiento');
+    const filas = sheet.getDataRange().getValues();
+    stock.forEach(function (a) {
+      const f = indiceDeFila_(filas, a.id);
+      if (f > 0) sheet.getRange(f + 1, 17).setValue('');   // el aviso de stock es de un solo uso
+    });
+    productos.forEach(function (a) {
+      const f = indiceDeFila_(filas, a.id);
+      if (f > 0) sheet.getRange(f + 1, 11).setValue(a.huella);   // ya se avisó a este precio
+    });
+  }
+  (alertas.busquedas || []).forEach(function (a) { guardarUltimaAlerta_(a.query, a.huella); });
+  (alertas.apariciones || []).forEach(function (a) { guardarTeniaResultados_(a.query, 'SI'); });
+}
+
+/**
+ * Para comprobar de una vez que el correo funciona (permisos, cuota, dirección):
+ * ejecutala a mano desde el editor y fijate si llega.
+ */
+function probarMail() {
+  MailApp.sendEmail({
+    to: emailAlertas_(),
+    subject: '🧴 Prueba del comparador de perfumes',
+    body: 'Si estás leyendo esto, los avisos por mail funcionan.' + NL + NL +
+          'Cuota de mails que te quedan hoy: ' + MailApp.getRemainingDailyQuota(),
+  });
+  console.log('Mail de prueba enviado a ' + emailAlertas_());
+}
+
+function revisarFavoritos_(limite) {
   const favoritos = listarFavoritos();
-  if (favoritos.length === 0) return { ofertas: [], apariciones: [] };
+  if (favoritos.length === 0) return { ofertas: [], apariciones: [], sinRevisar: 0, fallas: [] };
 
   const ahora = new Date();
   const alertas = [];
   const apariciones = [];
   const paraHistorial = [];
+  let sinRevisar = 0;
+  const fallas = [];
 
   favoritos.forEach(function (fav) {
-    const resultado = buscarTodos_(fav.query);
-
-    // Una sola fila por día y por búsqueda: la mejor oferta del día. Antes se
-    // guardaban TODOS los resultados de todas las tiendas.
-    const mejor = mejorOferta_(resultado.results);
-    if (mejor) {
-      paraHistorial.push([ahora, 'búsqueda', fav.query, mejor.site, mejor.name,
-                          precioEfectivo_(mejor), stockTexto_(mejor.inStock), mejor.url]);
+    // Una búsqueda que falla (o que no llega por tiempo) no puede tirar abajo a las
+    // demás: se anota y se sigue.
+    if (limite && Date.now() > limite) { sinRevisar++; return; }
+    try {
+      revisarUnFavorito_(fav, ahora, alertas, apariciones, paraHistorial);
+    } catch (err) {
+      console.error('Vigilancia "' + fav.query + '": ' + err.message);
+      fallas.push(fav.query + '": ' + err.message);
     }
-
-    // Una búsqueda que no devolvía nada en ninguna tienda y ahora sí es el único
-    // descubrimiento que Siguiendo no puede hacer: avisa aunque esté cara.
-    // La primera vez solo se anota el estado, sin avisar.
-    const hayAhora = resultado.results.length > 0;
-    const habiaAntes = obtenerTeniaResultados_(fav.query);
-    guardarTeniaResultados_(fav.query, hayAhora ? 'SI' : 'NO');
-
-    if (hayAhora && habiaAntes === 'NO') {
-      apariciones.push({
-        query: fav.query, objetivo: fav.precioObjetivo,
-        mejor: mejor, cuantos: resultado.results.length,
-      });
-    }
-
-    if (!fav.precioObjetivo) return;
-
-    const cumplen = resultado.results
-      .filter(function (r) {
-        // `inStock !== false` y no `inStock`: desde que el stock dice la verdad,
-        // null significa "no se sabe", y descartarlo dejaba afuera tiendas
-        // enteras (Empretienda no publica stock en el listado).
-        return r.inStock !== false && precioEfectivo_(r) != null &&
-               precioEfectivo_(r) <= Number(fav.precioObjetivo);
-      })
-      .sort(function (a, b) { return precioEfectivo_(a) - precioEfectivo_(b); });
-
-    if (cumplen.length === 0) {
-      // Si ya nadie cumple el objetivo, se borra la huella para que el día que
-      // vuelva a cumplirse (aunque sea al mismo precio) avise de nuevo.
-      guardarUltimaAlerta_(fav.query, '');
-      return;
-    }
-
-    const huellaVieja = obtenerUltimaAlerta_(fav.query);
-    const huellaActual = JSON.stringify(cumplen.map(function (i) { return i.site + ':' + precioEfectivo_(i); }));
-
-    if (huellaActual !== huellaVieja) {
-      // Se manda el listado completo de las tiendas que cumplen, no solo la que
-      // cambió, porque el mail sirve para decidir dónde comprar. Para que no
-      // parezca el mismo mail de ayer, va también lo que había la vez anterior
-      // y el correo marca qué se movió.
-      alertas.push({
-        query: fav.query, objetivo: fav.precioObjetivo,
-        items: cumplen, anterior: huellaAMapa_(huellaVieja),
-      });
-      guardarUltimaAlerta_(fav.query, huellaActual);
-    }
-
-    Utilities.sleep(1000);
   });
 
   anotarHistorial_(paraHistorial);
-  return { ofertas: alertas, apariciones: apariciones };
+  return { ofertas: alertas, apariciones: apariciones, sinRevisar: sinRevisar, fallas: fallas };
+}
+
+function revisarUnFavorito_(fav, ahora, alertas, apariciones, paraHistorial) {
+  const resultado = buscarTodos_(fav.query);
+
+  // Una sola fila por día y por búsqueda: la mejor oferta del día. Antes se
+  // guardaban TODOS los resultados de todas las tiendas.
+  const mejor = mejorOferta_(resultado.results);
+  if (mejor) {
+    paraHistorial.push([ahora, 'búsqueda', fav.query, mejor.site, mejor.name,
+                        precioEfectivo_(mejor), stockTexto_(mejor.inStock), mejor.url]);
+  }
+
+  // Una búsqueda que no devolvía nada en ninguna tienda y ahora sí es el único
+  // descubrimiento que Siguiendo no puede hacer: avisa aunque esté cara.
+  // La primera vez solo se anota el estado, sin avisar.
+  const hayAhora = resultado.results.length > 0;
+  const habiaAntes = obtenerTeniaResultados_(fav.query);
+
+  if (hayAhora && habiaAntes === 'NO') {
+    // Todavía NO se anota que apareció: eso se hace cuando el mail ya salió.
+    apariciones.push({
+      query: fav.query, objetivo: fav.precioObjetivo,
+      mejor: mejor, cuantos: resultado.results.length,
+    });
+  } else {
+    guardarTeniaResultados_(fav.query, hayAhora ? 'SI' : 'NO');
+  }
+
+  if (!fav.precioObjetivo) return;
+
+  const cumplen = resultado.results
+    .filter(function (r) {
+      // `inStock !== false` y no `inStock`: desde que el stock dice la verdad,
+      // null significa "no se sabe", y descartarlo dejaba afuera tiendas
+      // enteras (Empretienda no publica stock en el listado).
+      return r.inStock !== false && precioEfectivo_(r) != null &&
+             precioEfectivo_(r) <= Number(fav.precioObjetivo);
+    })
+    .sort(function (a, b) { return precioEfectivo_(a) - precioEfectivo_(b); });
+
+  if (cumplen.length === 0) {
+    // Si ya nadie cumple el objetivo, se borra la huella para que el día que
+    // vuelva a cumplirse (aunque sea al mismo precio) avise de nuevo.
+    guardarUltimaAlerta_(fav.query, '');
+    return;
+  }
+
+  const huellaVieja = obtenerUltimaAlerta_(fav.query);
+  const huellaActual = JSON.stringify(cumplen.map(function (i) { return i.site + ':' + precioEfectivo_(i); }));
+
+  if (huellaActual !== huellaVieja) {
+    // Se manda el listado completo de las tiendas que cumplen, no solo la que
+    // cambió, porque el mail sirve para decidir dónde comprar. Para que no
+    // parezca el mismo mail de ayer, va también lo que había la vez anterior
+    // y el correo marca qué se movió. La huella nueva se anota recién cuando
+    // el mail salió (`confirmarAvisos_`).
+    alertas.push({
+      query: fav.query, objetivo: fav.precioObjetivo,
+      items: cumplen, anterior: huellaAMapa_(huellaVieja), huella: huellaActual,
+    });
+  }
 }
 
 /** Convierte la huella guardada ("Tienda:precio") en { tienda: precio }. */
@@ -897,7 +1013,7 @@ function actualizarPreciosSeguimiento() {
 }
 
 function refrescarPrecios_(esRevisionDiaria) {
-  const salida = { precios: [], stock: [] };
+  const salida = { precios: [], stock: [], sinRevisar: 0 };
   const seguidos = listarSeguimiento();
   if (seguidos.length === 0) return salida;
 
@@ -921,7 +1037,6 @@ function refrescarPrecios_(esRevisionDiaria) {
   let sinRevisar = 0;
 
   const sheet = obtenerSheet_().getSheetByName('Seguimiento');
-  const filas = sheet.getDataRange().getValues();
   const ahora = new Date();
   const paraHistorial = [];
   const cache = {};   // una misma búsqueda sirve para varios productos de la misma tienda
@@ -962,74 +1077,96 @@ function refrescarPrecios_(esRevisionDiaria) {
     .map(function (m) { return { url: m.seg.url, site: m.seg.site }; });
 
   const confirmado = {};
-  const sinTiempo = {};   // sin confirmar por falta de tiempo: hoy no se sabe
   for (let i = 0; i < aVerificar.length; i += 20) {   // verificarStockLote atiende de a 20
     const grupo = aVerificar.slice(i, i + 20);
-    if (Date.now() - inicio > limiteVerificacion) {
-      grupo.forEach(function (p) { sinTiempo[p.url] = true; });
-      continue;
-    }
+    if (Date.now() - inicio > limiteVerificacion) break;   // sin tiempo: queda sin confirmar
     const lote = verificarStockLote(grupo);
     Object.keys(lote).forEach(function (url) { confirmado[url] = lote[url]; });
   }
+  const verificables = {};
+  aVerificar.forEach(function (p) { verificables[p.url] = true; });
   medidos.forEach(function (m) {
     const v = confirmado[m.seg.url];
     if (v === true || v === false) m.match.inStock = v;
-    // Un cartel del listado sin confirmar no alcanza para un mail de "volvió".
-    else if (sinTiempo[m.seg.url]) m.match.inStock = null;
+    // Un cartel del listado sin confirmar no alcanza para un mail de "volvió", sea
+    // porque no hubo tiempo, la ficha no cargó o no traía el dato: hoy no se sabe.
+    else if (verificables[m.seg.url]) m.match.inStock = null;
   });
 
-  // 3) Escribir lo medido y armar los avisos.
+  // 3) Escribir lo medido y armar los avisos. Esta revisión pudo durar minutos y
+  //    mientras tanto cambiaste una marca, un objetivo, un 🔔 o arrastraste una
+  //    ficha: por eso la planilla se lee de nuevo ACÁ (una sola lectura para todos)
+  //    y todo se calcula sobre lo que hay ahora, no sobre la foto del principio.
+  //    Los avisos NO se anotan como enviados acá: eso lo hace `confirmarAvisos_`
+  //    cuando el mail ya salió.
+  const filasFrescas = sheet.getDataRange().getValues();
+  const limiteEscritura = 330000;   // pasado esto no se arranca ninguna escritura más
+
   medidos.forEach(function (m) {
     const seg = m.seg;
     const match = m.match;
     const precioHoy = precioEfectivo_(match);
     const stockHoy = match.inStock === true ? 'SI' : (match.inStock === false ? 'NO' : '');
 
-    let fila = indiceDeFila_(filas, seg.id);
-    let rango = null;
-    if (fila > 0) {
-      // La fila se vuelve a leer justo antes de escribir: esta revisión puede durar
-      // minutos, y si en el medio arrastraste una ficha, cambiaste una marca o el
-      // objetivo, escribir la foto del principio lo deshacía. Si la fila ya no es
-      // esa (se borró o se movió algo), no se escribe nada.
-      rango = sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length);
-      const actual = completarFila_(rango.getValues()[0]);
-      if (actual[0] !== seg.id) {
-        fila = -1;
-      } else {
-        filas[fila] = actual;
+    const fila = indiceDeFila_(filasFrescas, seg.id);
+    if (fila < 1) return;   // lo dejaste de seguir mientras se revisaba
+    if (Date.now() - inicio > limiteEscritura) { sinRevisar++; return; }
+
+    const nueva = completarFila_(filasFrescas[fila]);
+    const numero = function (v) { return v === '' || v == null ? null : Number(v); };
+    const objetivo = numero(nueva[6]);
+    const precioInicial = numero(nueva[4]);
+    const minActual = numero(nueva[12]);
+    const maxActual = numero(nueva[13]);
+    const avisarStock = nueva[16] === 'SI';
+    const sinStockDesde = fechaISO_(nueva[15]);
+
+    nueva[9] = ahora;                                         // última revisión
+
+    // El precio puede faltar justo cuando el producto está agotado (hay tiendas
+    // que lo esconden). Antes eso hacía saltear el producto entero y el "sin
+    // stock" no quedaba registrado; ahora se guarda el stock igual.
+    if (precioHoy != null) {
+      nueva[11] = nueva[5];                                   // el de antes de hoy
+      nueva[5]  = precioHoy;                                  // precio actual
+      nueva[12] = minActual == null ? precioHoy : Math.min(minActual, precioHoy);
+      nueva[13] = maxActual == null ? precioHoy : Math.max(maxActual, precioHoy);
+    }
+
+    // La marca que publica la tienda (Pedix la trae) completa la que falte.
+    if (!nueva[18] && match.marca) nueva[18] = match.marca;
+
+    // Si hoy no se sabe, no se toca: "no se sabe" no borra un "sin stock" anterior.
+    if (stockHoy) {
+      nueva[14] = stockHoy;
+      if (stockHoy === 'NO' && !nueva[15]) nueva[15] = ahora;   // desde cuándo
+      if (stockHoy === 'SI') nueva[15] = '';
+    }
+
+    // Aviso de precio: llegó al objetivo o, sin objetivo, bajó al menos un 5% del
+    // precio con el que lo empezaste a seguir. El umbral evita que un redondeo de
+    // la tienda mande un mail todos los días. Si ya no se cumple, se borra la
+    // huella para que el día que vuelva a cumplirse (aunque sea al mismo precio)
+    // avise de nuevo, igual que en la vigilancia de precios.
+    let avisoPrecio = null;
+    if (esRevisionDiaria && precioHoy != null) {
+      const llegoAlObjetivo = objetivo != null && precioHoy <= objetivo;
+      const bajoSolo = objetivo == null && precioInicial && precioHoy <= precioInicial * 0.95;
+      if (!llegoAlObjetivo && !bajoSolo) {
+        nueva[10] = '';
+      } else if (String(nueva[10]) !== String(precioHoy)) {   // si no, ya se avisó a este precio
+        avisoPrecio = {
+          id: seg.id, huella: String(precioHoy),
+          name: seg.name, site: seg.site, url: seg.url,
+          precioInicial: precioInicial, precioHoy: precioHoy,
+          objetivo: objetivo, enStock: match.inStock,
+        };
       }
     }
-    if (fila > 0) {
-      // Una sola escritura con toda la fila en vez de varias sueltas: con muchos
-      // productos seguidos, cada llamada a la planilla se nota.
-      const nueva = completarFila_(filas[fila]);
-      nueva[9] = ahora;                                         // última revisión
 
-      // El precio puede faltar justo cuando el producto está agotado (hay tiendas
-      // que lo esconden). Antes eso hacía saltear el producto entero y el "sin
-      // stock" no quedaba registrado; ahora se guarda el stock igual.
-      if (precioHoy != null) {
-        nueva[5]  = precioHoy;                                  // precio actual
-        nueva[11] = seg.precioActual == null ? '' : seg.precioActual;   // el de antes de hoy
-        nueva[12] = seg.precioMin == null ? precioHoy : Math.min(seg.precioMin, precioHoy);
-        nueva[13] = seg.precioMax == null ? precioHoy : Math.max(seg.precioMax, precioHoy);
-      }
-
-      // La marca que publica la tienda (Pedix la trae) completa la que falte.
-      if (!nueva[18] && match.marca) nueva[18] = match.marca;
-
-      // Si hoy no se sabe, no se toca: "no se sabe" no borra un "sin stock" anterior.
-      if (stockHoy) {
-        nueva[14] = stockHoy;
-        if (stockHoy === 'NO' && !nueva[15]) nueva[15] = ahora;   // desde cuándo
-        if (stockHoy === 'SI') nueva[15] = '';
-      }
-
-      rango.setValues([nueva]);
-      filas[fila] = nueva;   // para que las marcas de alerta de más abajo no pisen esto
-    }
+    // Una sola escritura con toda la fila en vez de varias sueltas: con muchos
+    // productos seguidos, cada llamada a la planilla se nota.
+    sheet.getRange(fila + 1, 1, 1, COLUMNAS_SEGUIMIENTO.length).setValues([nueva]);
     if (!esRevisionDiaria) return;
 
     // El historial lo escribe solo la revisión de las 9, que es la medición
@@ -1039,46 +1176,20 @@ function refrescarPrecios_(esRevisionDiaria) {
                         precioHoy == null ? '' : precioHoy, stockHoy, seg.url]);
 
     // Aviso de stock: es de un solo uso, como el "avisame cuando llegue" de las
-    // tiendas. Se manda y se apaga. Se decide por el estado de hoy y no por el
-    // cambio respecto a ayer, así "Actualizar ahora" no se come el mail: si lo
-    // tocaste y viste que volvió, el aviso sigue prendido y el mail de las 9 sale.
-    if (seg.avisarStock && stockHoy === 'SI') {
+    // tiendas. Se decide por el estado de hoy y no por el cambio respecto a ayer,
+    // así "Actualizar ahora" no se come el mail: si lo tocaste y viste que volvió,
+    // el aviso sigue prendido y el mail de las 9 sale.
+    if (avisarStock && stockHoy === 'SI') {
       salida.stock.push({
-        name: seg.name, site: seg.site, url: seg.url,
-        precioHoy: precioHoy, sinStockDesde: seg.sinStockDesde,
+        id: seg.id, name: seg.name, site: seg.site, url: seg.url,
+        precioHoy: precioHoy, sinStockDesde: sinStockDesde,
       });
-      if (fila > 0) {
-        sheet.getRange(fila + 1, 17).setValue('');
-        filas[fila][16] = '';
-      }
     }
-
-    if (precioHoy == null) return;
-
-    // Avisa si llegó al objetivo o, sin objetivo, si bajó al menos un 5% del
-    // precio con el que lo empezaste a seguir. El umbral evita que un redondeo
-    // de la tienda mande un mail todos los días.
-    const llegoAlObjetivo = seg.precioObjetivo != null && precioHoy <= seg.precioObjetivo;
-    const bajoSolo = seg.precioObjetivo == null && seg.precioInicial &&
-                     precioHoy <= seg.precioInicial * 0.95;
-    if (!llegoAlObjetivo && !bajoSolo) return;
-
-    const huella = String(precioHoy);
-    if (fila > 0 && String(filas[fila][10]) === huella) return;   // ya se avisó a este precio
-
-    salida.precios.push({
-      name: seg.name, site: seg.site, url: seg.url,
-      precioInicial: seg.precioInicial, precioHoy: precioHoy,
-      objetivo: seg.precioObjetivo, enStock: match.inStock,
-    });
-    if (fila > 0) {
-      sheet.getRange(fila + 1, 11).setValue(huella);
-      filas[fila][10] = huella;
-    }
+    if (avisoPrecio) salida.precios.push(avisoPrecio);
   });
 
   anotarHistorial_(paraHistorial);
-  if (sinRevisar) console.warn('Seguimiento: se acabó el tiempo y ' + sinRevisar + ' producto(s) quedan para la próxima revisión.');
+  salida.sinRevisar = sinRevisar;
   return salida;
 }
 
@@ -1205,6 +1316,13 @@ function enviarEmailAlertas_(alertas) {
     partes.push('PRODUCTOS QUE SEGUÍS' + NL + NL + bloques);
   }
 
+  const problemas = alertas.problemas || [];
+  if (problemas.length) {
+    partes.push('⚠️ LA REVISIÓN TUVO PROBLEMAS' + NL + NL +
+                problemas.map(function (t) { return '  • ' + t; }).join(NL) + NL + NL +
+                'Lo que no se pudo revisar no se perdió: se vuelve a intentar mañana.');
+  }
+
   MailApp.sendEmail({
     to: emailAlertas_(),
     subject: '🧴 ' + asuntoAlertas_(alertas),
@@ -1225,8 +1343,11 @@ function asuntoAlertas_(alertas) {
   if (s) partes.push(s + (s === 1 ? ' perfume volvió a tener stock' : ' perfumes volvieron a tener stock'));
   if (b) partes.push(b + (b === 1 ? ' búsqueda con ofertas' : ' búsquedas con ofertas'));
   if (p) partes.push(p + (p === 1 ? ' producto que bajó' : ' productos que bajaron'));
-  return partes.length <= 2 ? partes.join(' y ')
-                            : partes.slice(0, -1).join(', ') + ' y ' + partes[partes.length - 1];
+  const texto = partes.length <= 2 ? partes.join(' y ')
+                                   : partes.slice(0, -1).join(', ') + ' y ' + partes[partes.length - 1];
+  const hayProblemas = (alertas.problemas || []).length > 0;
+  if (!texto) return 'La revisión diaria tuvo problemas';
+  return hayProblemas ? texto + ' (y la revisión tuvo problemas)' : texto;
 }
 
 function pesos_(n) {
@@ -1494,13 +1615,16 @@ function scrapeShopify_(site, query) {
       inStock = confirmado ? true : null;
     }
 
-    return {
+    const item = {
       site: site.name,
       name: p.title,
       price: parseUsPrice_(p.price),
       inStock: inStock,
       url: site.baseUrl + p.url,
     };
+    const lista = parseUsPrice_(p.compare_at_price_min);
+    if (lista && item.price != null && lista > item.price) item.priceLista = lista;
+    return item;
   });
 }
 
@@ -1535,13 +1659,16 @@ function scrapeWooCommerce_(site, query) {
     const rawPrice = p.prices ? (p.prices.sale_price || p.prices.price) : null;
     const price = rawPrice ? Number(rawPrice) / Math.pow(10, minorUnit) : null;
 
-    return {
+    const item = {
       site: site.name,
       name: p.name,
       price: price,
       inStock: p.is_in_stock !== false,
       url: p.permalink,
     };
+    const regular = p.prices && p.prices.regular_price ? Number(p.prices.regular_price) / Math.pow(10, minorUnit) : null;
+    if (regular && price != null && regular > price) item.priceLista = regular;
+    return item;
   });
 }
 
@@ -1626,7 +1753,7 @@ function scrapeTiendanube_(site, query) {
     const rawHref = hrefMatch[1];
     const productUrl = rawHref.startsWith('http') ? rawHref : site.baseUrl + rawHref;
 
-    items.push({
+    const item = {
       site: site.name,
       name: nameMatch[1].trim(),
       price: price,
@@ -1635,7 +1762,14 @@ function scrapeTiendanube_(site, query) {
       // esto pasa a decir "hay stock" siempre. verificarStockLote() lo confirma.
       stockFuente: 'cartel',
       url: productUrl,
-    });
+    };
+    // `price` ya es el precio con la promoción aplicada; el tachado es el de lista.
+    const compareMatch = forwardCorto.match(/js-compare-price-display[^>]*>\s*\$?\s*([\d.,]+)/);
+    if (compareMatch && price != null) {
+      const lista = parsePrice_(compareMatch[1]);
+      if (lista > price) item.priceLista = lista;
+    }
+    items.push(item);
   });
 
   return items;
@@ -1765,14 +1899,35 @@ function scrapeEmpretienda_(site, query) {
     const lowerBlock = block.toLowerCase();
     const noStock = lowerBlock.includes('sin stock') || lowerBlock.includes('agotado') || lowerBlock.includes('sold-out') || lowerBlock.includes('sold_out');
 
-    items.push({
+    const item = {
       site: site.name,
       name: nameMatch[1].trim(),
       price: price,
       inStock: noStock ? false : null,
       stockFuente: noStock ? 'cartel' : null,
       url: hrefMatch[1],
-    });
+    };
+
+    // Precio tachado (<del>): el de lista, antes de la rebaja.
+    const delMatch = priceBlockMatch && priceBlockMatch[1].match(/<del[^>]*>\s*(\$[\d.,]+)/);
+    if (delMatch && price != null) {
+      const lista = parsePrice_(delMatch[1]);
+      if (lista > price) item.priceLista = lista;
+    }
+
+    // Las dos tiendas Empretienda muestran aparte el precio "con transferencia"
+    // (la clase se escribe `tranfer`, sin la s). Sin esto se comparaban a precio
+    // de lista contra tiendas que sí tenían su descuento por transferencia cargado.
+    const transfMatch = block.match(/products-feed__product-tran(?:s)?fer-discount[^>]*>\s*<strong>\s*(\$[\d.,]+)/);
+    if (transfMatch && price != null) {
+      const transf = parsePrice_(transfMatch[1]);
+      if (transf > 0 && transf < price) {
+        item.priceTransferencia = Math.round(transf);
+        item.pctTransferencia = Math.round((1 - transf / price) * 100);
+      }
+    }
+
+    items.push(item);
   });
 
   return items;
@@ -1860,6 +2015,7 @@ function scrapePedix_(site, query) {
     const productId = idMatch ? idMatch[1] : null;
 
     const priceMatch = block.match(/"price":(\d+(?:\.\d+)?)/);
+    const descuentoMatch = block.match(/"priceDiscount":(\d+(?:\.\d+)?)/);
     const marcaMatch = block.match(/"groupName":"([^"]*)"/);   // en Pedix el grupo es la marca
     const stockMatch = block.match(/"stockQty":(\d+)/);
     const activeMatch = block.match(/"active":(true|false)/);
@@ -1883,14 +2039,25 @@ function scrapePedix_(site, query) {
       ? site.baseUrl + '/categoria/' + categoryMatch[1] + '/producto/' + productId
       : site.baseUrl;
 
-    items.push({
+    // En Pedix el precio que paga el cliente es `priceDiscount` cuando existe y es
+    // menor; `price` pasa a ser el "precio anterior" tachado (así lo dibuja la propia
+    // tienda, y su marcado para buscadores también usa priceDiscount). Antes se leía
+    // siempre `price`: en Idalium, casi la mitad de los productos figuraban más caros
+    // de lo que realmente cuestan. Un priceDiscount en 0 cuenta como "sin descuento".
+    const lista = priceMatch ? Number(priceMatch[1]) : null;
+    const conDescuento = descuentoMatch ? Number(descuentoMatch[1]) : null;
+    const hayRebaja = conDescuento && lista != null && conDescuento < lista;
+
+    const item = {
       site: site.name,
       name: name,
-      price: priceMatch ? Number(priceMatch[1]) : null,
+      price: hayRebaja ? conDescuento : lista,
       inStock: inStock,
       url: url,
       marca: marcaMatch ? marcaConocida_(marcaMatch[1]) : '',
-    });
+    };
+    if (hayRebaja) item.priceLista = lista;
+    items.push(item);
   });
 
   return items;
@@ -1903,10 +2070,9 @@ function scrapePedix_(site, query) {
  * lista de "marcas" que no lo son. Las que falten se suman a MARCAS_CONOCIDAS.
  */
 function marcaConocida_(texto) {
-  const limpiar = function (t) {
-    return ' ' + String(t == null ? '' : t).toLowerCase().normalize('NFD')
-      .replace(RE_ACENTOS_, '').replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
-  };
+  // La misma normalización que usa esRelevante_, para que "la marca que publica la
+  // tienda" y "la que está en el nombre" se comparen con el mismo criterio.
+  const limpiar = function (t) { return ' ' + palabrasDe_(t).join(' ') + ' '; };
   const buscado = limpiar(texto);
   let mejor = '';
   MARCAS_CONOCIDAS.forEach(function (m) {
@@ -2018,6 +2184,9 @@ function scrapeTiendaNegocio_(site, query) {
           inStock: stockMatch ? stockMatch[1] === 'true' : null,
           url: productUrl,
         };
+
+        // `price` es el de lista; best_buy, el que se cobra (ya con la promo)
+        if (priceMatch && Number(priceMatch[1]) > precio) item.priceLista = Number(priceMatch[1]);
 
         // discount_promo acompaña a best_buy; discount_price, al precio de lista
         const dPromo = bloqueProducto.match(/&q;discount_promo&q;:(\d+(?:\.\d+)?)/);
@@ -2458,6 +2627,11 @@ function debugPorcentajesTransferencia2() {
   });
 }
 function obtenerPorcentajeTransferencia_(site) {
+  // Si la tienda lo declara en SITES (`descuentoTransferencia: 20`), se usa tal cual.
+  // Sirve para tiendas cuyo descuento no se puede leer de la página (West Import lo
+  // aplica con un script en el carrito) o para promociones que querés tener en cuenta.
+  if (site.descuentoTransferencia != null) return Number(site.descuentoTransferencia);
+
   const cache = CacheService.getScriptCache();
   const cacheKey = 'transferPct_' + site.id;
   const cacheado = cache.get(cacheKey);
